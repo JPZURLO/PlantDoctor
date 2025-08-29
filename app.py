@@ -1,13 +1,13 @@
 # -*- coding: utf-8 -*-
 from flask import Flask, request, jsonify
-import mysql.connector
-import os 
-from mysql.connector import Error
+import psycopg2
+import os
+from psycopg2 import Error
 
 app = Flask(__name__)
 
-# Configurações do banco de dados MySQL da Aiven
-# As credenciais são lidas das variáveis de ambiente para maior segurança.
+# Configurações do banco de dados PostgreSQL do Render
+# As credenciais são lidas das variáveis de ambiente
 DB_HOST = os.environ.get("DB_HOST")
 DB_USER = os.environ.get("DB_USER")
 DB_PASSWORD = os.environ.get("DB_PASSWORD")
@@ -16,21 +16,20 @@ DB_PORT = os.environ.get("DB_PORT")
 
 def create_db_connection():
     """
-    Função para criar uma conexão com o banco de dados MySQL.
+    Função para criar uma conexão com o banco de dados PostgreSQL.
     """
     connection = None
     try:
-        connection = mysql.connector.connect(
+        connection = psycopg2.connect(
             host=DB_HOST,
             user=DB_USER,
-            passwd=DB_PASSWORD,
+            password=DB_PASSWORD,
             database=DB_NAME,
-            port=int(DB_PORT),
-            ssl_disabled=False
+            port=DB_PORT
         )
-        print("Conexão com o banco de dados MySQL bem-sucedida")
+        print("Conexão com o banco de dados PostgreSQL bem-sucedida")
     except Error as e:
-        print(f"Ocorreu um erro ao conectar ao MySQL: {e}")
+        print(f"Ocorreu um erro ao conectar ao PostgreSQL: {e}")
     return connection
 
 @app.route("/register", methods=["POST"])
@@ -50,7 +49,6 @@ def register_user():
     if not all([name, email, password]):
         return jsonify({"message": "Nome, e-mail e senha são obrigatórios"}), 400
 
-    # Simulação de hash de senha. Em um projeto real, use bibliotecas como bcrypt
     password_hash = password.__hash__()
 
     connection = create_db_connection()
@@ -60,13 +58,13 @@ def register_user():
     try:
         cursor = connection.cursor()
         
-        # Primeiro, verifique se o e-mail já existe
+        # Verifique se o e-mail já existe
         check_query = "SELECT email FROM users WHERE email = %s"
         cursor.execute(check_query, (email,))
         if cursor.fetchone():
-            return jsonify({"message": "Este e-mail já está em uso"}), 409 # Conflict
+            return jsonify({"message": "Este e-mail já está em uso"}), 409
 
-        # Se o e-mail não existe, insere o novo usuário
+        # Insere o novo usuário
         insert_query = "INSERT INTO users (name, email, password_hash) VALUES (%s, %s, %s)"
         cursor.execute(insert_query, (name, email, password_hash))
         connection.commit()
@@ -77,8 +75,11 @@ def register_user():
         print(f"Erro ao inserir dados: {e}")
         return jsonify({"message": "Erro no servidor. Tente novamente mais tarde."}), 500
     finally:
-        cursor.close()
-        connection.close()
+        if 'cursor' in locals() and cursor is not None:
+            cursor.close()
+        if connection is not None:
+            connection.close()
 
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int(os.environ.get("PORT", 5000)), debug=True)
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port, debug=True)
