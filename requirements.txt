@@ -5,3 +5,4 @@ gunicorn
 werkzeug
 psycopg2-binary
 bcrypt
+Flask-Mail
