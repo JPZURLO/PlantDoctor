@@ -15,7 +15,7 @@ class User(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150), nullable=False)
     email = db.Column(db.String(150), unique=True, nullable=False)
-    password_hash = db.Column(db.String(400), nullable=False) # Aumentado para acomodar hashes mais longos
+    password_hash = db.Column(db.Text, nullable=False)
 
     # Define um valor padrão para a data de criação no lado do servidor.
     created_at = db.Column(
