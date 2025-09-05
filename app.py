@@ -1,85 +1,89 @@
-# -*- coding: utf-8 -*-
 from flask import Flask, request, jsonify
-import psycopg2
+from werkzeug.security import check_password_hash, generate_password_hash
+from flask_jwt_extended import create_access_token, JWTManager
+from models import db, User  # Importa o banco de dados e o modelo User
 import os
-from psycopg2 import Error
 
 app = Flask(__name__)
 
-# Configurações do banco de dados PostgreSQL do Render
-# As credenciais são lidas das variáveis de ambiente
-DB_HOST = os.environ.get("DB_HOST")
-DB_USER = os.environ.get("DB_USER")
-DB_PASSWORD = os.environ.get("DB_PASSWORD")
-DB_NAME = os.environ.get("DB_NAME")
-DB_PORT = os.environ.get("DB_PORT")
+# --- Configuração ---
+# Configura o caminho absoluto para o banco de dados SQLite
+basedir = os.path.abspath(os.path.dirname(__file__))
+app.config["SQLALCHEMY_DATABASE_URI"] = "sqlite:///" + os.path.join(basedir, "database.db")
+app.config["SQLALCHEMY_TRACK_MODIFICATIONS"] = False
+app.config["JWT_SECRET_KEY"] = "sua-chave-secreta-super-segura"  # Mude isso!
 
-def create_db_connection():
-    """
-    Função para criar uma conexão com o banco de dados PostgreSQL.
-    """
-    connection = None
-    try:
-        connection = psycopg2.connect(
-            host=DB_HOST,
-            user=DB_USER,
-            password=DB_PASSWORD,
-            database=DB_NAME,
-            port=DB_PORT
-        )
-        print("Conexão com o banco de dados PostgreSQL bem-sucedida")
-    except Error as e:
-        print(f"Ocorreu um erro ao conectar ao PostgreSQL: {e}")
-    return connection
+# --- Inicialização ---
+db.init_app(app)  # Inicializa o banco de dados com a aplicação Flask
+jwt = JWTManager(app)
 
-@app.route("/register", methods=["POST"])
-def register_user():
-    """
-    Endpoint para registrar um novo usuário no banco de dados.
-    Recebe um JSON com 'name', 'email' e 'password'.
-    """
-    if not request.is_json:
-        return jsonify({"message": "Content-Type must be application/json"}), 400
+# --- Criação das Tabelas ---
+# Garante que as tabelas do banco de dados sejam criadas antes da primeira requisição
+with app.app_context():
+    db.create_all()
 
+@app.route("/api/auth/register", methods=["POST"])
+def register():
+    """
+    Registra um novo usuário no banco de dados com uma senha criptografada.
+    """
     data = request.get_json()
-    name = data.get("name")
-    email = data.get("email")
-    password = data.get("password")
+    email = data.get('email')
+    password = data.get('password')
 
-    if not all([name, email, password]):
-        return jsonify({"message": "Nome, e-mail e senha são obrigatórios"}), 400
+    if not email or not password:
+        return jsonify({"message": "Email ou senha ausentes."}), 400
 
-    password_hash = password.__hash__()
+    if User.query.filter_by(email=email).first():
+        return jsonify({"message": "Este e-mail já está em uso."}), 409
 
-    connection = create_db_connection()
-    if connection is None:
-        return jsonify({"message": "Erro no servidor. Tente novamente mais tarde."}), 500
+    hashed_password = generate_password_hash(password)
+    new_user = User(email=email, password_hash=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
 
-    try:
-        cursor = connection.cursor()
-        
-        # Verifique se o e-mail já existe
-        check_query = "SELECT email FROM users WHERE email = %s"
-        cursor.execute(check_query, (email,))
-        if cursor.fetchone():
-            return jsonify({"message": "Este e-mail já está em uso"}), 409
+    return jsonify({"message": f"Usuário {email} registrado com sucesso."}), 201
 
-        # Insere o novo usuário
-        insert_query = "INSERT INTO users (name, email, password_hash) VALUES (%s, %s, %s)"
-        cursor.execute(insert_query, (name, email, password_hash))
-        connection.commit()
-        
-        return jsonify({"message": "Cadastro realizado com sucesso!"}), 200
 
-    except Error as e:
-        print(f"Erro ao inserir dados: {e}")
-        return jsonify({"message": "Erro no servidor. Tente novamente mais tarde."}), 500
-    finally:
-        if 'cursor' in locals() and cursor is not None:
-            cursor.close()
-        if connection is not None:
-            connection.close()
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    """
+    Processa a tentativa de login de um usuário, verificando as credenciais no banco de dados
+    e retornando um token JWT se for bem-sucedido.
+    """
+    data = request.get_json()
+    print(f"Dados de login recebidos: {data}")
 
-if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port, debug=True)
+    if not data:
+        return jsonify({"message": "Nenhum dado recebido."}), 400
+
+    email = data.get('email')
+    password = data.get('password')
+
+    if not email or not password:
+        return jsonify({"message": "Email ou senha ausentes."}), 400
+
+    # --- LÓGICA CORRIGIDA E CONECTADA AO BANCO DE DADOS ---
+
+    # 1. Encontre o usuário no banco de dados pelo e-mail usando SQLAlchemy.
+    user = User.query.filter_by(email=email).first()
+
+    # 2. Verifique se o usuário existe E se a senha está correta.
+    if user and check_password_hash(user.password_hash, password):
+        # 3. Se as credenciais estiverem corretas, crie um token de acesso JWT.
+        access_token = create_access_token(identity=user.email)
+        print(f"Login bem-sucedido para {user.email}.")
+        return jsonify({
+            "message": "Login bem-sucedido!",
+            "token": access_token
+        }), 200
+    else:
+        # 4. Se o usuário não existir ou a senha estiver incorreta, retorne um erro 401.
+        print(f"Credenciais inválidas para a tentativa de login com o email: {email}.")
+        return jsonify({"message": "Credenciais inválidas."}), 401
+
+
+if __name__ == '__main__':
+    # A porta pode ser 5000, 8000, etc.
+    app.run(debug=True, port=5000)
+
