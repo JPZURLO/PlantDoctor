@@ -1,39 +1,42 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager
+from itsdangerous import URLSafeTimedSerializer
+from flask_mail import Mail, Message
 from models import db, User # Importa a partir do models.py
 
 app = Flask(__name__)
 
 # --- Configuração ---
-# Usa a DATABASE_URL do Render, ou um ficheiro local para testes
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
-
-# ✅ PASSO DE DEPURAÇÃO: Imprime a URL original recebida do Render.
-# O 'flush=True' garante que o log aparece imediatamente.
-print(f"📌 [DEBUG] DATABASE_URL Original: {database_url}", flush=True)
-
-# ✅ CORRIGIDO: Garante que a URL do PostgreSQL é compatível com SQLAlchemy 1.4+
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
-
-# ✅ PASSO DE DEPURAÇÃO: Imprime a URL final que será usada pelo SQLAlchemy.
-print(f"📌 [DEBUG] DATABASE_URL Final para SQLAlchemy: {database_url}", flush=True)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
+# --- Configuração do Flask-Mail (NOVAS) ---
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', '1', 't']
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME') # O seu e-mail
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD') # A sua senha de app
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', app.config['MAIL_USERNAME'])
+
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
+mail = Mail(app)
+serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
 # --- Rotas da API ---
 
 @app.route("/api/auth/register", methods=["POST"])
 def register():
+    # ... (código de registo existente, sem alterações)
     data = request.get_json()
     if not data:
         return jsonify({"message": "Nenhum dado recebido."}), 400
@@ -64,6 +67,7 @@ def register():
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
+    # ... (código de login existente, sem alterações)
     data = request.get_json()
     if not data:
         return jsonify({"message": "Nenhum dado recebido."}), 400
@@ -84,6 +88,71 @@ def login():
         }), 200
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
+
+
+# --- NOVAS ROTAS PARA RECUPERAÇÃO DE SENHA ---
+
+@app.route("/api/auth/forgot-password", methods=["POST"])
+def forgot_password():
+    data = request.get_json()
+    email = data.get('email')
+    if not email:
+        return jsonify({"message": "Email em falta."}), 400
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        # Resposta genérica para não revelar se um e-mail existe ou não
+        return jsonify({"message": "Se o e-mail estiver registado, receberá um link para redefinir a senha."}), 200
+
+    # Gera um token seguro e com tempo de expiração (1 hora)
+    token = serializer.dumps(user.email, salt='password-reset-salt')
+
+    # Cria o link que o utilizador irá clicar (aponta para o seu app)
+    # IMPORTANTE: "plantdoctor://reset-password" é o seu deep link
+    reset_url = f"plantdoctor://reset-password?token={token}"
+
+    # Corpo do e-mail em HTML
+    html_body = render_template_string("""
+        <p>Olá {{ name }},</p>
+        <p>Recebemos um pedido para redefinir a sua senha. Por favor, clique no link abaixo para continuar:</p>
+        <p><a href="{{ link }}" style="padding: 10px 15px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">Redefinir Senha</a></p>
+        <p>Se não pediu esta alteração, pode ignorar este e-mail.</p>
+        <p>O link expira em 1 hora.</p>
+    """, name=user.name, link=reset_url)
+
+    msg = Message("Redefinição de Senha - Plant Doctor", recipients=[user.email], html=html_body)
+    
+    try:
+        mail.send(msg)
+        return jsonify({"message": "Se o e-mail estiver registado, receberá um link para redefinir a senha."}), 200
+    except Exception as e:
+        app.logger.error(f"Erro ao enviar e-mail: {e}")
+        return jsonify({"message": "Erro ao enviar e-mail de recuperação."}), 500
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json()
+    token = data.get('token')
+    new_password = data.get('new_password')
+
+    if not token or not new_password:
+        return jsonify({"message": "Token ou nova senha em falta."}), 400
+
+    try:
+        # Verifica o token e a sua validade (max_age = 3600 segundos = 1 hora)
+        email = serializer.loads(token, salt='password-reset-salt', max_age=3600)
+    except Exception:
+        return jsonify({"message": "Token inválido ou expirado."}), 401
+
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        return jsonify({"message": "Utilizador não encontrado."}), 404
+
+    user.password_hash = generate_password_hash(new_password)
+    db.session.commit()
+
+    return jsonify({"message": "Senha atualizada com sucesso!"}), 200
+
 
 # --- Bloco de Execução ---
 if __name__ == '__main__':
