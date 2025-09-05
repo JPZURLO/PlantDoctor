@@ -9,9 +9,14 @@ app = Flask(__name__)
 
 # --- Configuração ---
 # Usa a DATABASE_URL do Render, ou um ficheiro local para testes
-app.config['SQLALCHEMY_DATABASE_URI'] = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
+# ✅ CORRIGIDO: Garante que a URL do PostgreSQL é compatível com SQLAlchemy 1.4+
+if database_url and database_url.startswith("postgres://"):
+    database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
-app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback') # Use uma variável de ambiente para isto
+app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
 # --- Inicialização das Extensões ---
 db.init_app(app)
@@ -25,7 +30,6 @@ def register():
     if not data:
         return jsonify({"message": "Nenhum dado recebido."}), 400
 
-    # ✅ CORRIGIDO: Agora lê o campo 'name' do JSON recebido.
     name = data.get('name')
     email = data.get('email')
     password = data.get('password')
@@ -38,7 +42,6 @@ def register():
 
     hashed_password = generate_password_hash(password)
     
-    # ✅ CORRIGIDO: Passa o 'name' ao criar o novo utilizador.
     new_user = User(name=name, email=email, password_hash=hashed_password)
 
     try:
@@ -47,7 +50,6 @@ def register():
         return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
     except Exception as e:
         db.session.rollback()
-        # Log do erro para depuração no servidor
         app.logger.error(f"Erro ao registar utilizador: {e}")
         return jsonify({"message": "Erro interno ao registar utilizador."}), 500
 
@@ -76,10 +78,8 @@ def login():
         return jsonify({"message": "Credenciais inválidas."}), 401
 
 # --- Bloco de Execução ---
-# (Este bloco não é executado no Render, mas é útil para testes locais)
 if __name__ == '__main__':
     with app.app_context():
-        # Cria as tabelas se não existirem
         db.create_all()
     app.run(debug=True, host='0.0.0.0', port=5000)
 
