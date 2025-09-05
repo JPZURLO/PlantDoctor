@@ -10,9 +10,17 @@ app = Flask(__name__)
 # --- Configuração ---
 # Usa a DATABASE_URL do Render, ou um ficheiro local para testes
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
+
+# ✅ PASSO DE DEPURAÇÃO: Imprime a URL original recebida do Render.
+# O 'flush=True' garante que o log aparece imediatamente.
+print(f"📌 [DEBUG] DATABASE_URL Original: {database_url}", flush=True)
+
 # ✅ CORRIGIDO: Garante que a URL do PostgreSQL é compatível com SQLAlchemy 1.4+
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+# ✅ PASSO DE DEPURAÇÃO: Imprime a URL final que será usada pelo SQLAlchemy.
+print(f"📌 [DEBUG] DATABASE_URL Final para SQLAlchemy: {database_url}", flush=True)
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
@@ -82,3 +90,4 @@ if __name__ == '__main__':
     with app.app_context():
         db.create_all()
     app.run(debug=True, host='0.0.0.0', port=5000)
+
