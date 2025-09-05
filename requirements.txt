@@ -1,3 +1,7 @@
 Flask
+Flask-SQLAlchemy
+Flask-JWT-Extended
+gunicorn
+werkzeug
 psycopg2-binary
-Werkzeug
+bcrypt
