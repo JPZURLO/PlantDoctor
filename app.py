@@ -81,9 +81,8 @@ def login():
 # --- NOVAS ROTAS PARA RECUPERAÇÃO DE SENHA ---
 
 # ✅ CORREÇÃO 1: O nome da rota foi alterado para corresponder ao app Android
-@app.route("/api/auth/request-password-reset", methods=["POST"])
+@app.route("/api/auth/request-password-reset", methods=["GET"])
 def request_password_reset():
-    # ✅ CORREÇÃO 2: Alterado para ler o e-mail da URL (?email=...) em vez de um corpo JSON
     email = request.args.get('email')
     
     if not email:
