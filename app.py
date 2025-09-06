@@ -92,8 +92,8 @@ def login():
 
 # --- NOVAS ROTAS PARA RECUPERAÇÃO DE SENHA ---
 
-@app.route("/api/auth/forgot-password", methods=["POST"])
-def forgot_password():
+@app.route("/api/auth/request-password-reset", methods=["POST"])
+def request_password_reset():
     data = request.get_json()
     email = data.get('email')
     if not email:
