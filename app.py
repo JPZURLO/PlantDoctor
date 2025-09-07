@@ -102,8 +102,7 @@ def request_password_reset():
         <p>Olá {{ name }},</p>
         <p>Recebemos um pedido para redefinir a sua senha. Por favor, clique no botão abaixo para continuar:</p>
         <p style="margin-top: 20px; margin-bottom: 20px;">
-            <a href="{{ link }}" style="padding: 12px 25px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; font-size: 16px;">Redefinir Senha</a>
-        </p>
+            <a href="{{ link }}">Clique aqui para redefinir sua senha</a> </p>
         <p>Se não pediu esta alteração, pode ignorar este e-mail.</p>
         <p>O link expira em 1 hora.</p>
     """, name=user.name, link=reset_url)
