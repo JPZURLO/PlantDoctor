@@ -1,14 +1,19 @@
 import os
 from flask import Flask, request, jsonify, render_template_string
-# ... (outros imports)
+from flask_sqlalchemy import SQLAlchemy
+from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
+from itsdangerous import URLSafeTimedSerializer
+from flask_mail import Mail, Message
 from models import db, User, Culture
 
 app = Flask(__name__)
-# ... (sua configuração)
+
+# --- Configuração ---
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
+
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
@@ -19,19 +24,16 @@ app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
 
-
+# --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-# ... (resto das inicializações)
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
 
-# --- ROTAS DE AUTENTICAÇÃO E OUTRAS (sem alterações) ---
-# ... (suas rotas de login, register, etc.)
+# --- ROTAS DE AUTENTICAÇÃO E REGISTO ---
 @app.route("/api/auth/register", methods=["POST"])
 def register():
-    # ... (código existente, sem alterações)
     data = request.get_json()
     name = data.get('name')
     email = data.get('email')
@@ -57,8 +59,6 @@ def login():
     user = User.query.filter_by(email=email).first()
     if user and check_password_hash(user.password_hash, password):
         access_token = create_access_token(identity=user.id)
-        # ✅ NOVO CAMPO ADICIONADO À RESPOSTA
-        # Verifica se o utilizador tem alguma cultura associada
         has_cultures = len(user.cultures) > 0
         
         return jsonify({
@@ -69,6 +69,7 @@ def login():
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
 
+# --- ROTAS DE CULTURAS ---
 @app.route("/api/cultures", methods=["GET"])
 @jwt_required()
 def get_cultures():
@@ -98,12 +99,9 @@ def save_user_cultures():
     db.session.commit()
     return jsonify({"message": "Culturas guardadas com sucesso!"}), 200
 
-
-# ✅✅✅ NOVO ENDPOINT ADICIONADO AQUI ✅✅✅
 @app.route("/api/user/my-cultures", methods=["GET"])
 @jwt_required()
 def get_my_cultures():
-    """Retorna a lista de culturas selecionadas pelo utilizador logado."""
     user_id = get_jwt_identity()
     user = User.query.get(user_id)
     if not user:
@@ -111,7 +109,7 @@ def get_my_cultures():
     
     return jsonify([culture.to_dict() for culture in user.cultures]), 200
 
-# ... (seu bloco if __name__ == '__main__':)
+# --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
     if Culture.query.first() is None:
         cultures_to_add = [
@@ -131,26 +129,10 @@ def seed_data():
         db.session.bulk_save_objects(cultures_to_add)
         db.session.commit()
 
+# --- BLOCO DE EXECUÇÃO PRINCIPAL ---
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         seed_data()
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
-```
-
----
-
-### 2. Atualizações no Aplicativo Android
-
-Agora, vamos fazer o seu aplicativo consumir este novo endpoint.
-
-**Passo 2.1: Adicionar a Biblioteca de Imagens (Coil)**
-
-Para carregar imagens a partir de URLs, precisamos de uma biblioteca. A Coil é a mais moderna para Kotlin. Adicione a seguinte linha ao seu ficheiro `build.gradle.kts` (no nível do módulo `app`):
-
-```groovy
-dependencies {
-    // ... outras dependências
-    implementation("io.coil-kt:coil:2.5.0")
-}
 
