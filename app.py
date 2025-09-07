@@ -99,13 +99,12 @@ def request_password_reset():
     reset_url = f"plantdoctor://reset-password?token={token}&email={user.email}"
 
     html_body = render_template_string("""
-        <p>Olá {{ name }},</p>
-        <p>Recebemos um pedido para redefinir a sua senha. Por favor, clique no botão abaixo para continuar:</p>
-        <p style="margin-top: 20px; margin-bottom: 20px;">
-            <a href="{{ link }}">Clique aqui para redefinir sua senha</a> </p>
-        <p>Se não pediu esta alteração, pode ignorar este e-mail.</p>
-        <p>O link expira em 1 hora.</p>
-    """, name=user.name, link=reset_url)
+    <p>Olá {{ name }},</p>
+    <p>Recebemos um pedido para redefinir a sua senha. Use o link abaixo para continuar:</p>
+    <p><a href="{{ link }}">{{ link }}</a></p>
+    <p>Se não pediu esta alteração, pode ignorar este e-mail.</p>
+    <p>O link expira em 1 hora.</p>
+""", name=user.name, link=reset_url)
 
     msg = Message("Redefinição de Senha - Plant Doctor", recipients=[user.email], html=html_body)
     
