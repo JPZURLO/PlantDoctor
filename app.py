@@ -36,7 +36,6 @@ serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
 @app.route("/api/auth/register", methods=["POST"])
 def register():
-    # ... (código de registo inalterado) ...
     data = request.get_json()
     if not data:
         return jsonify({"message": "Nenhum dado recebido."}), 400
@@ -46,7 +45,8 @@ def register():
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
     if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Este email já está registado."}), 409
+        # ✅✅✅ MENSAGEM DE ERRO MELHORADA ✅✅✅
+        return jsonify({"message": "Este e-mail já se encontra registado. Por favor, tente fazer login."}), 409
     hashed_password = generate_password_hash(password)
     new_user = User(name=name, email=email, password_hash=hashed_password)
     try:
@@ -60,7 +60,6 @@ def register():
 
 @app.route("/api/auth/login", methods=["POST"])
 def login():
-    # ... (código de login inalterado) ...
     data = request.get_json()
     if not data:
         return jsonify({"message": "Nenhum dado recebido."}), 400
@@ -93,7 +92,6 @@ def request_password_reset():
 
     token = serializer.dumps(user.email, salt='password-reset-salt')
     
-    # ✅✅✅ ALTERAÇÃO 1: O link agora aponta para a nossa nova rota de redirecionamento no servidor ✅✅✅
     redirect_url = f"https://plantdoctor-backend.onrender.com/api/auth/redirect-reset?token={token}&email={user.email}"
 
     html_body = render_template_string("""
@@ -114,7 +112,6 @@ def request_password_reset():
         app.logger.error(f"Erro ao enviar e-mail: {e}")
         return jsonify({"message": "Erro ao enviar e-mail de recuperação."}), 500
 
-# ✅✅✅ ALTERAÇÃO 2: Nova rota que serve como "Página Ponte" ✅✅✅
 @app.route("/api/auth/redirect-reset", methods=["GET"])
 def redirect_reset():
     token = request.args.get('token')
@@ -122,10 +119,8 @@ def redirect_reset():
     if not token or not email:
         return "<h1>Erro: Token ou e-mail ausente na URL.</h1>", 400
 
-    # Monta o link final que abre a aplicação
     deep_link = f"plantdoctor://reset-password?token={token}&email={email}"
 
-    # Retorna um HTML simples que executa um JavaScript para fazer o redirecionamento
     return f"""
     <!DOCTYPE html>
     <html>
@@ -144,7 +139,6 @@ def redirect_reset():
 
 @app.route("/api/auth/reset-password", methods=["POST"])
 def reset_password():
-    # ... (código de reset inalterado) ...
     data = request.get_json()
     token = data.get('token')
     new_password = data.get('new_password')
