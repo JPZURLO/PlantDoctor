@@ -19,10 +19,7 @@ app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
 # --- Configuração do Flask-Mail ---
-# APENAS PARA TESTE - NÃO FAÇA ISTO EM PRODUÇÃO
-app.config['MAIL_SERVER'] = 'smtp.gmail.com' 
-# Comente a linha original temporariamente:
-# app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
 app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', '1', 't']
 app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
@@ -81,9 +78,8 @@ def login():
         return jsonify({"message": "Credenciais inválidas."}), 401
 
 
-# --- NOVAS ROTAS PARA RECUPERAÇÃO DE SENHA ---
+# --- ROTAS PARA RECUPERAÇÃO DE SENHA ---
 
-# ✅ CORREÇÃO 1: O nome da rota foi alterado para corresponder ao app Android
 @app.route("/api/auth/request-password-reset", methods=["GET"])
 def request_password_reset():
     email = request.args.get('email')
@@ -93,15 +89,21 @@ def request_password_reset():
 
     user = User.query.filter_by(email=email).first()
     if not user:
+        # Resposta genérica para não revelar se um e-mail existe ou não
         return jsonify({"message": "Se o e-mail estiver registado, receberá um link para redefinir a senha."}), 200
 
     token = serializer.dumps(user.email, salt='password-reset-salt')
-    reset_url = f"plantdoctor://reset-password?token={token}"
+    
+    # ✅✅✅ CORREÇÃO APLICADA AQUI ✅✅✅
+    # Adicionamos o parâmetro '&email=' ao final da URL
+    reset_url = f"plantdoctor://reset-password?token={token}&email={user.email}"
 
     html_body = render_template_string("""
         <p>Olá {{ name }},</p>
-        <p>Recebemos um pedido para redefinir a sua senha. Por favor, clique no link abaixo para continuar:</p>
-        <p><a href="{{ link }}" style="padding: 10px 15px; background-color: #007bff; color: white; text-decoration: none; border-radius: 5px;">Redefinir Senha</a></p>
+        <p>Recebemos um pedido para redefinir a sua senha. Por favor, clique no botão abaixo para continuar:</p>
+        <p style="margin-top: 20px; margin-bottom: 20px;">
+            <a href="{{ link }}" style="padding: 12px 25px; background-color: #28a745; color: white; text-decoration: none; border-radius: 5px; font-size: 16px;">Redefinir Senha</a>
+        </p>
         <p>Se não pediu esta alteração, pode ignorar este e-mail.</p>
         <p>O link expira em 1 hora.</p>
     """, name=user.name, link=reset_url)
@@ -119,16 +121,20 @@ def request_password_reset():
 def reset_password():
     data = request.get_json()
     token = data.get('token')
-    new_password = data.get('new_password')
+    new_password = data.get('new_password') # No Android, o campo é 'newPassword', mas o @SerializedName cuida disso.
+    
     if not token or not new_password:
         return jsonify({"message": "Token ou nova senha em falta."}), 400
     try:
+        # O link expira em 1 hora (3600 segundos)
         email = serializer.loads(token, salt='password-reset-salt', max_age=3600)
     except Exception:
         return jsonify({"message": "Token inválido ou expirado."}), 401
+    
     user = User.query.filter_by(email=email).first()
     if not user:
         return jsonify({"message": "Utilizador não encontrado."}), 404
+    
     user.password_hash = generate_password_hash(new_password)
     db.session.commit()
     return jsonify({"message": "Senha atualizada com sucesso!"}), 200
