@@ -1,16 +1,11 @@
 import os
 from flask import Flask, request, jsonify, render_template_string
-from flask_sqlalchemy import SQLAlchemy
-from werkzeug.security import generate_password_hash, check_password_hash
+# ... (outros imports)
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
-from itsdangerous import URLSafeTimedSerializer
-from flask_mail import Mail, Message
 from models import db, User, Culture
 
 app = Flask(__name__)
-
-# --- Configuração ---
-# ... (O resto da sua configuração permanece igual)
+# ... (sua configuração)
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
@@ -25,13 +20,32 @@ app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
 
 
-# --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
+# ... (resto das inicializações)
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
-# --- Rotas de Autenticação ---
+
+# --- ROTAS DE AUTENTICAÇÃO E OUTRAS (sem alterações) ---
+# ... (suas rotas de login, register, etc.)
+@app.route("/api/auth/register", methods=["POST"])
+def register():
+    # ... (código existente, sem alterações)
+    data = request.get_json()
+    name = data.get('name')
+    email = data.get('email')
+    password = data.get('password')
+    if not name or not email or not password:
+        return jsonify({"message": "Nome, email ou senha em falta."}), 400
+    if User.query.filter_by(email=email).first():
+        return jsonify({"message": "Este e-mail já está registado. Por favor, tente fazer login."}), 409
+    hashed_password = generate_password_hash(password)
+    new_user = User(name=name, email=email, password_hash=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
+
 @app.route("/api/auth/login", methods=["POST"])
 def login():
     data = request.get_json()
@@ -54,23 +68,6 @@ def login():
         }), 200
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
-
-# --- ROTAS DE REGISTO, CULTURAS, etc. (sem alterações) ---
-@app.route("/api/auth/register", methods=["POST"])
-def register():
-    data = request.get_json()
-    name = data.get('name')
-    email = data.get('email')
-    password = data.get('password')
-    if not name or not email or not password:
-        return jsonify({"message": "Nome, email ou senha em falta."}), 400
-    if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Este e-mail já está registado. Por favor, tente fazer login."}), 409
-    hashed_password = generate_password_hash(password)
-    new_user = User(name=name, email=email, password_hash=hashed_password)
-    db.session.add(new_user)
-    db.session.commit()
-    return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
 
 @app.route("/api/cultures", methods=["GET"])
 @jwt_required()
@@ -101,6 +98,20 @@ def save_user_cultures():
     db.session.commit()
     return jsonify({"message": "Culturas guardadas com sucesso!"}), 200
 
+
+# ✅✅✅ NOVO ENDPOINT ADICIONADO AQUI ✅✅✅
+@app.route("/api/user/my-cultures", methods=["GET"])
+@jwt_required()
+def get_my_cultures():
+    """Retorna a lista de culturas selecionadas pelo utilizador logado."""
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "Utilizador não encontrado."}), 404
+    
+    return jsonify([culture.to_dict() for culture in user.cultures]), 200
+
+# ... (seu bloco if __name__ == '__main__':)
 def seed_data():
     if Culture.query.first() is None:
         cultures_to_add = [
@@ -125,4 +136,21 @@ if __name__ == '__main__':
         db.create_all()
         seed_data()
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+```
+
+---
+
+### 2. Atualizações no Aplicativo Android
+
+Agora, vamos fazer o seu aplicativo consumir este novo endpoint.
+
+**Passo 2.1: Adicionar a Biblioteca de Imagens (Coil)**
+
+Para carregar imagens a partir de URLs, precisamos de uma biblioteca. A Coil é a mais moderna para Kotlin. Adicione a seguinte linha ao seu ficheiro `build.gradle.kts` (no nível do módulo `app`):
+
+```groovy
+dependencies {
+    // ... outras dependências
+    implementation("io.coil-kt:coil:2.5.0")
+}
 
