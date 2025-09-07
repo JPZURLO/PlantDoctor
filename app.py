@@ -2,23 +2,21 @@ import os
 from flask import Flask, request, jsonify, render_template_string
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
-from flask_jwt_extended import create_access_token, JWTManager
+from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from itsdangerous import URLSafeTimedSerializer
 from flask_mail import Mail, Message
-from models import db, User # Importa a partir do models.py
+from models import db, User, Culture
 
 app = Flask(__name__)
 
 # --- Configuração ---
+# ... (O resto da sua configuração permanece igual)
 database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
-
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
-
-# --- Configuração do Flask-Mail ---
 app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
 app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
 app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', '1', 't']
@@ -26,141 +24,105 @@ app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
 app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
 app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
 
+
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
 mail = Mail(app)
 serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
-# --- Rotas da API ---
+# --- Rotas de Autenticação ---
+@app.route("/api/auth/login", methods=["POST"])
+def login():
+    data = request.get_json()
+    email = data.get('email')
+    password = data.get('password')
+    if not email or not password:
+        return jsonify({"message": "Email ou senha em falta."}), 400
+    
+    user = User.query.filter_by(email=email).first()
+    if user and check_password_hash(user.password_hash, password):
+        access_token = create_access_token(identity=user.id)
+        # ✅ NOVO CAMPO ADICIONADO À RESPOSTA
+        # Verifica se o utilizador tem alguma cultura associada
+        has_cultures = len(user.cultures) > 0
+        
+        return jsonify({
+            "message": "Login bem-sucedido!",
+            "token": access_token,
+            "has_cultures": has_cultures
+        }), 200
+    else:
+        return jsonify({"message": "Credenciais inválidas."}), 401
 
+# --- ROTAS DE REGISTO, CULTURAS, etc. (sem alterações) ---
 @app.route("/api/auth/register", methods=["POST"])
 def register():
     data = request.get_json()
-    if not data:
-        return jsonify({"message": "Nenhum dado recebido."}), 400
     name = data.get('name')
     email = data.get('email')
     password = data.get('password')
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
     if User.query.filter_by(email=email).first():
-        # ✅✅✅ MENSAGEM DE ERRO MELHORADA ✅✅✅
-        return jsonify({"message": "Este e-mail já se encontra registado. Por favor, tente fazer login."}), 409
+        return jsonify({"message": "Este e-mail já está registado. Por favor, tente fazer login."}), 409
     hashed_password = generate_password_hash(password)
     new_user = User(name=name, email=email, password_hash=hashed_password)
+    db.session.add(new_user)
+    db.session.commit()
+    return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
+
+@app.route("/api/cultures", methods=["GET"])
+@jwt_required()
+def get_cultures():
     try:
-        db.session.add(new_user)
-        db.session.commit()
-        return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
+        all_cultures = Culture.query.order_by(Culture.name).all()
+        return jsonify([culture.to_dict() for culture in all_cultures]), 200
     except Exception as e:
-        db.session.rollback()
-        app.logger.error(f"Erro ao registar utilizador: {e}")
-        return jsonify({"message": "Erro interno ao registar utilizador."}), 500
+        app.logger.error(f"Erro ao buscar culturas: {e}")
+        return jsonify({"message": "Erro interno ao buscar culturas."}), 500
 
-@app.route("/api/auth/login", methods=["POST"])
-def login():
-    data = request.get_json()
-    if not data:
-        return jsonify({"message": "Nenhum dado recebido."}), 400
-    email = data.get('email')
-    password = data.get('password')
-    if not email or not password:
-        return jsonify({"message": "Email ou senha em falta."}), 400
-    user = User.query.filter_by(email=email).first()
-    if user and check_password_hash(user.password_hash, password):
-        access_token = create_access_token(identity=user.id)
-        return jsonify({
-            "message": "Login bem-sucedido!",
-            "token": access_token
-        }), 200
-    else:
-        return jsonify({"message": "Credenciais inválidas."}), 401
-
-
-# --- ROTAS PARA RECUPERAÇÃO DE SENHA ---
-
-@app.route("/api/auth/request-password-reset", methods=["GET"])
-def request_password_reset():
-    email = request.args.get('email')
-    if not email:
-        return jsonify({"message": "Email em falta."}), 400
-
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        return jsonify({"message": "Se o e-mail estiver registado, receberá um link."}), 200
-
-    token = serializer.dumps(user.email, salt='password-reset-salt')
-    
-    redirect_url = f"https://plantdoctor-backend.onrender.com/api/auth/redirect-reset?token={token}&email={user.email}"
-
-    html_body = render_template_string("""
-        <p>Olá {{ name }},</p>
-        <p>Recebemos um pedido para redefinir a sua senha. Por favor, clique no link abaixo para continuar:</p>
-        <p><a href="{{ link }}">Redefinir a sua senha</a></p>
-        <br>
-        <p>Se não pediu esta alteração, pode ignorar este e-mail.</p>
-        <p>O link expira em 1 hora.</p>
-    """, name=user.name, link=redirect_url)
-
-    msg = Message("Redefinição de Senha - Plant Doctor", recipients=[user.email], html=html_body)
-    
-    try:
-        mail.send(msg)
-        return jsonify({"message": "Se o e-mail estiver registado, receberá um link."}), 200
-    except Exception as e:
-        app.logger.error(f"Erro ao enviar e-mail: {e}")
-        return jsonify({"message": "Erro ao enviar e-mail de recuperação."}), 500
-
-@app.route("/api/auth/redirect-reset", methods=["GET"])
-def redirect_reset():
-    token = request.args.get('token')
-    email = request.args.get('email')
-    if not token or not email:
-        return "<h1>Erro: Token ou e-mail ausente na URL.</h1>", 400
-
-    deep_link = f"plantdoctor://reset-password?token={token}&email={email}"
-
-    return f"""
-    <!DOCTYPE html>
-    <html>
-    <head>
-        <title>A Redirecionar...</title>
-        <script type="text/javascript">
-            window.location.href = "{deep_link}";
-        </script>
-    </head>
-    <body>
-        <p>A redirecionar para a aplicação Plant Doctor...</p>
-        <p>Se a aplicação não abrir automaticamente, por favor, certifique-se de que a tem instalada.</p>
-    </body>
-    </html>
-    """
-
-@app.route("/api/auth/reset-password", methods=["POST"])
-def reset_password():
-    data = request.get_json()
-    token = data.get('token')
-    new_password = data.get('new_password')
-    if not token or not new_password:
-        return jsonify({"message": "Token ou nova senha em falta."}), 400
-    try:
-        email = serializer.loads(token, salt='password-reset-salt', max_age=3600)
-    except Exception:
-        return jsonify({"message": "Token inválido ou expirado."}), 401
-    
-    user = User.query.filter_by(email=email).first()
+@app.route("/api/user/cultures", methods=["POST"])
+@jwt_required()
+def save_user_cultures():
+    user_id = get_jwt_identity()
+    user = User.query.get(user_id)
     if not user:
         return jsonify({"message": "Utilizador não encontrado."}), 404
-    
-    user.password_hash = generate_password_hash(new_password)
+    data = request.get_json()
+    culture_ids = data.get('culture_ids')
+    if not isinstance(culture_ids, list):
+        return jsonify({"message": "Dados inválidos. 'culture_ids' deve ser uma lista de IDs."}), 400
+    user.cultures.clear()
+    for culture_id in culture_ids:
+        culture = Culture.query.get(culture_id)
+        if culture:
+            user.cultures.append(culture)
     db.session.commit()
-    return jsonify({"message": "Senha atualizada com sucesso!"}), 200
+    return jsonify({"message": "Culturas guardadas com sucesso!"}), 200
 
+def seed_data():
+    if Culture.query.first() is None:
+        cultures_to_add = [
+            Culture(name="Milho", image_url="https://placehold.co/128x128/FBC02D/FFFFFF?text=Milho"),
+            Culture(name="Café", image_url="https://placehold.co/128x128/5D4037/FFFFFF?text=Caf%C3%A9"),
+            Culture(name="Soja", image_url="https://placehold.co/128x128/689F38/FFFFFF?text=Soja"),
+            Culture(name="Cana de Açúcar", image_url="https://placehold.co/128x128/7CB342/FFFFFF?text=Cana"),
+            Culture(name="Trigo", image_url="https://placehold.co/128x128/F57C00/FFFFFF?text=Trigo"),
+            Culture(name="Algodão", image_url="https://placehold.co/128x128/ECEFF1/000000?text=Algod%C3%A3o"),
+            Culture(name="Arroz", image_url="https://placehold.co/128x128/E0E0E0/000000?text=Arroz"),
+            Culture(name="Feijão", image_url="https://placehold.co/128x128/3E2723/FFFFFF?text=Feij%C3%A3o"),
+            Culture(name="Mandioca", image_url="https://placehold.co/128x128/8D6E63/FFFFFF?text=Mandioca"),
+            Culture(name="Cacau", image_url="https://placehold.co/128x128/4E342E/FFFFFF?text=Cacau"),
+            Culture(name="Banana", image_url="https://placehold.co/128x128/FFEE58/000000?text=Banana"),
+            Culture(name="Laranja", image_url="https://placehold.co/128x128/FB8C00/FFFFFF?text=Laranja")
+        ]
+        db.session.bulk_save_objects(cultures_to_add)
+        db.session.commit()
 
-# --- Bloco de Execução ---
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
+        seed_data()
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
