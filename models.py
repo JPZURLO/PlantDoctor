@@ -1,32 +1,52 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
 
-# Cria uma instância do SQLAlchemy. A sua aplicação principal irá inicializá-la.
 db = SQLAlchemy()
+
+# Tabela de associação para a relação muitos-para-muitos entre User e Culture
+user_cultures = db.Table('user_cultures',
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
+    db.Column('culture_id', db.Integer, db.ForeignKey('culture.id'), primary_key=True)
+)
 
 class User(db.Model):
     """
-    Modelo ORM (Mapeamento Objeto-Relacional) que representa a tabela 'users'
-    no banco de dados.
+    Modelo ORM que representa a tabela 'users' no banco de dados.
     """
     __tablename__ = 'users'
 
-    # Mapeia as colunas da tabela para atributos da classe Python.
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(150), nullable=False)
     email = db.Column(db.String(150), unique=True, nullable=False)
     password_hash = db.Column(db.Text, nullable=False)
-
-    # Define um valor padrão para a data de criação no lado do servidor.
     created_at = db.Column(
         db.TIMESTAMP(timezone=True),
         nullable=False,
         server_default=func.now()
     )
 
+    # ✅ RELAÇÃO ADICIONADA: Liga o utilizador às suas culturas selecionadas.
+    cultures = db.relationship('Culture', secondary=user_cultures, lazy='subquery',
+                               backref=db.backref('users', lazy=True))
+
     def __repr__(self):
-        """
-        Representação em string do objeto User, útil para depuração.
-        """
         return f'<User {self.email}>'
+
+class Culture(db.Model):
+    """
+    Modelo ORM que representa a tabela 'culture' no banco de dados.
+    """
+    __tablename__ = 'culture'
+
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    image_url = db.Column(db.String(255), nullable=False)
+
+    def to_dict(self):
+        """Converte o objeto Culture para um dicionário, útil para respostas JSON."""
+        return {
+            'id': self.id,
+            'name': self.name,
+            'image_url': self.image_url
+        }
 
