@@ -1,10 +1,8 @@
 import os
-from flask import Flask, request, jsonify, render_template_string
+from flask import Flask, request, jsonify
 from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
-from itsdangerous import URLSafeTimedSerializer
-from flask_mail import Mail, Message
 from models import db, User, Culture
 
 app = Flask(__name__)
@@ -17,21 +15,13 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
-app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
-app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
-app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'true').lower() in ['true', '1', 't']
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_USERNAME')
 
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-mail = Mail(app)
-serializer = URLSafeTimedSerializer(app.config['JWT_SECRET_KEY'])
 
-
-# --- ROTAS DE AUTENTICAÇÃO E REGISTO ---
+# --- ROTAS ---
+# ... (Suas outras rotas de login, registo, etc. permanecem aqui) ...
 @app.route("/api/auth/register", methods=["POST"])
 def register():
     data = request.get_json()
@@ -69,7 +59,6 @@ def login():
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
 
-# --- ROTAS DE CULTURAS ---
 @app.route("/api/cultures", methods=["GET"])
 @jwt_required()
 def get_cultures():
@@ -109,22 +98,23 @@ def get_my_cultures():
     
     return jsonify([culture.to_dict() for culture in user.cultures]), 200
 
+
 # --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
     if Culture.query.first() is None:
         cultures_to_add = [
-            Culture(name="Milho", image_url="https://placehold.co/128x128/FBC02D/FFFFFF?text=Milho"),
-            Culture(name="Café", image_url="https://placehold.co/128x128/5D4037/FFFFFF?text=Caf%C3%A9"),
-            Culture(name="Soja", image_url="https://placehold.co/128x128/689F38/FFFFFF?text=Soja"),
-            Culture(name="Cana de Açúcar", image_url="https://placehold.co/128x128/7CB342/FFFFFF?text=Cana"),
-            Culture(name="Trigo", image_url="https://placehold.co/128x128/F57C00/FFFFFF?text=Trigo"),
-            Culture(name="Algodão", image_url="https://placehold.co/128x128/ECEFF1/000000?text=Algod%C3%A3o"),
-            Culture(name="Arroz", image_url="https://placehold.co/128x128/E0E0E0/000000?text=Arroz"),
-            Culture(name="Feijão", image_url="https://placehold.co/128x128/3E2723/FFFFFF?text=Feij%C3%A3o"),
-            Culture(name="Mandioca", image_url="https://placehold.co/128x128/8D6E63/FFFFFF?text=Mandioca"),
-            Culture(name="Cacau", image_url="https://placehold.co/128x128/4E342E/FFFFFF?text=Cacau"),
-            Culture(name="Banana", image_url="https://placehold.co/128x128/FFEE58/000000?text=Banana"),
-            Culture(name="Laranja", image_url="https://placehold.co/128x128/FB8C00/FFFFFF?text=Laranja")
+            Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png"),
+            Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png"),
+            Culture(name="Soja", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s"),
+            Culture(name="Cana de Açúcar", image_url="https://i.pinimg.com/736x/d5/d0/ea/d5d0eaaa6a08dfee042f98e265ea7f87.jpg"),
+            Culture(name="Trigo", image_url="https://img.freepik.com/vetores-premium/ilustracao-de-icone-de-vetor-de-logotipo-de-trigo_833786-135.jpg"),
+            Culture(name="Algodão", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRjmTW5RRENEI3nrlt8Ry1nsTzrGVpfx0oj-Q&s"),
+            Culture(name="Arroz", image_url="https://img.freepik.com/vetores-premium/icone-de-arroz_609277-3890.jpg"),
+            Culture(name="Feijão", image_url="https://img.freepik.com/vetores-premium/ilustracao-vetorial-de-feijao-preto-de-alta-qualidade-vetor-de-icone-de-feijao-preto-isolado-design-plano-moderno_830337-39.jpg"),
+            Culture(name="Mandioca", image_url="https://media.istockphoto.com/id/1353955911/pt/vetorial/cassava-root.jpg?s=612x612&w=0&k=20&c=obWmGbXBnj46d4KbNNKW7DYMfWkAngFs9gRKh4E3OBg="),
+            Culture(name="Cacau", image_url="https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg"),
+            Culture(name="Banana", image_url="https://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png"),
+            Culture(name="Laranja", image_url="https://cdn-icons-png.flaticon.com/512/5858/5858316.png")
         ]
         db.session.bulk_save_objects(cultures_to_add)
         db.session.commit()
