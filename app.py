@@ -146,3 +146,4 @@ if __name__ == '__main__':
         db.create_all()
     # A porta 10000 é a padrão que o Render espera.
     app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
+
