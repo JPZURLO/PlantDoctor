@@ -75,30 +75,62 @@ def get_cultures():
         app.logger.error(f"Erro ao buscar culturas: {e}")
         return jsonify({"message": "Erro interno ao buscar culturas."}), 500
 
+# Em app.py
+
 @app.route("/api/user/cultures", methods=["POST"])
 @jwt_required()
 def save_user_cultures():
-    user_id = get_jwt_identity()
+    # Extrai o ID do utilizador do token (que é uma string)
+    user_id_from_token = get_jwt_identity()
+
+    # =============================================
+    # ▼▼▼ A CORREÇÃO É APLICADA AQUI ▼▼▼
+    # Converte o ID de string para um número inteiro
+    try:
+        user_id = int(user_id_from_token)
+    except ValueError:
+        return jsonify({"message": "ID de utilizador inválido no token."}), 400
+    # =============================================
+
+    # Procura o utilizador na base de dados usando o ID numérico
     user = User.query.get(user_id)
+    
     if not user:
         return jsonify({"message": "Utilizador não encontrado."}), 404
+
     data = request.get_json()
     culture_ids = data.get('culture_ids')
+
     if not isinstance(culture_ids, list):
         return jsonify({"message": "Dados inválidos. 'culture_ids' deve ser uma lista de IDs."}), 400
+    
+    # Limpa as culturas antigas e adiciona as novas
     user.cultures.clear()
     for culture_id in culture_ids:
         culture = Culture.query.get(culture_id)
         if culture:
             user.cultures.append(culture)
+            
     db.session.commit()
     return jsonify({"message": "Culturas guardadas com sucesso!"}), 200
+
+# Em app.py
 
 @app.route("/api/user/my-cultures", methods=["GET"])
 @jwt_required()
 def get_my_cultures():
-    user_id = get_jwt_identity()
+    # Extrai o ID do token (string)
+    user_id_from_token = get_jwt_identity()
+    
+    # Converte para número inteiro (esta é a correção)
+    try:
+        user_id = int(user_id_from_token)
+    except ValueError:
+        return jsonify({"message": "ID de utilizador inválido no token."}), 400
+
+    # Agora procura com o ID numérico
     user = User.query.get(user_id)
+    
     if not user:
         return jsonify({"message": "Utilizador não encontrado."}), 404
     
@@ -107,13 +139,10 @@ def get_my_cultures():
 
 # --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
-    print(">>> A popular a base de dados com culturas...")
-    
-    # A linha do 'if' continua comentada para o nosso teste
-    # if Culture.query.first() is None:
-    
-    # As linhas seguintes foram alinhadas à esquerda (dedentadas)
-    cultures_to_add = [
+    # Restaure esta verificação
+    if Culture.query.first() is None:
+        print(">>> Base de dados vazia. A popular com culturas...")
+        cultures_to_add = [
         Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png"),
         Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png"),
         Culture(name="Soja", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s"),
@@ -126,11 +155,12 @@ def seed_data():
         Culture(name="Cacau", image_url="https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg"),
         Culture(name="Banana", image_url="https://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png"),
         Culture(name="Laranja", image_url="https://cdn-icons-png.flaticon.com/512/5858/5858316.png")
-    ]
-    db.session.bulk_save_objects(cultures_to_add)
-    db.session.commit()
-    print(f">>> {len(cultures_to_add)} culturas foram adicionadas com sucesso.")
-
+   ]
+        db.session.bulk_save_objects(cultures_to_add)
+        db.session.commit()
+        print(f">>> {len(cultures_to_add)} culturas adicionadas.")
+    else:
+        print(">>> Base de dados já populada. Nenhuma ação necessária.")
 
 # --- BLOCO DE EXECUÇÃO PRINCIPAL ---
 if __name__ == '__main__':
