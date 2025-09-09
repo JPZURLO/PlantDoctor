@@ -162,10 +162,4 @@ def seed_data():
     else:
         print(">>> Base de dados já populada. Nenhuma ação necessária.")
 
-# --- BLOCO DE EXECUÇÃO PRINCIPAL ---
-if __name__ == '__main__':
-    with app.app_context():
-        db.create_all()
-        seed_data()
-    app.run(debug=True, host='0.0.0.0', port=int(os.environ.get('PORT', 10000)))
 
