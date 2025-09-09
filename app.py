@@ -107,7 +107,8 @@ def get_my_cultures():
 
 # --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
-    if Culture.query.first() is None:
+    print(">>> A popular a base de dados com culturas...")
+    #if Culture.query.first() is None:
         cultures_to_add = [
             Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png"),
             Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png"),
@@ -124,6 +125,8 @@ def seed_data():
         ]
         db.session.bulk_save_objects(cultures_to_add)
         db.session.commit()
+    print(f">>> {len(cultures_to_add)} culturas foram adicionadas com sucesso.")
+
 
 # --- BLOCO DE EXECUÇÃO PRINCIPAL ---
 if __name__ == '__main__':
