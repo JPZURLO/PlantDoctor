@@ -116,6 +116,8 @@ def save_user_cultures():
 
 # Em app.py
 
+# Em app.py
+
 @app.route("/api/user/my-cultures", methods=["GET"])
 @jwt_required()
 def get_my_cultures():
@@ -135,7 +137,6 @@ def get_my_cultures():
         return jsonify({"message": "Utilizador não encontrado."}), 404
     
     return jsonify([culture.to_dict() for culture in user.cultures]), 200
-
 
 # --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
