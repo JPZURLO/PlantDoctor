@@ -48,7 +48,13 @@ def login():
     
     user = User.query.filter_by(email=email).first()
     if user and check_password_hash(user.password_hash, password):
-        access_token = create_access_token(identity=user.id)
+        
+        # =============================================
+        # ▼▼▼ A CORREÇÃO É APLICADA AQUI ▼▼▼
+        # Converte o ID do usuário (que é um número) para uma string
+        access_token = create_access_token(identity=str(user.id))
+        # =============================================
+        
         has_cultures = len(user.cultures) > 0
         
         return jsonify({
