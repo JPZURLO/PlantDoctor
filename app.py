@@ -163,4 +163,15 @@ def seed_data():
     else:
         print(">>> Base de dados já populada. Nenhuma ação necessária.")
 
+if __name__ == '__main__':
+    with app.app_context():
+        # Cria todas as tabelas do banco de dados (caso não existam)
+        db.create_all()
+        
+        # Chama a função para popular com os dados iniciais
+        seed_data()
+        
+    # Inicia o servidor de desenvolvimento
+    app.run(debug=True)
+
 
