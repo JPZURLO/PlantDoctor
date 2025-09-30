@@ -1,9 +1,10 @@
 import os
 from flask import Flask, request, jsonify
-from flask_sqlalchemy import SQLAlchemy
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
-from models import db, User, Culture
+from datetime import datetime, timedelta
+# ✅ Linha de importação unificada
+from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType 
 
 app = Flask(__name__)
 
@@ -173,5 +174,84 @@ if __name__ == '__main__':
         
     # Inicia o servidor de desenvolvimento
     app.run(debug=True)
+# --- ROTAS DE GESTÃO DE PLANTIOS ---
 
+@app.route("/api/planted-cultures", methods=["POST"])
+@jwt_required()
+def add_planted_culture():
+    """ Cria um novo registo de plantio para o usuário logado. """
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    
+    culture_id = data.get('culture_id')
+    planting_date_str = data.get('planting_date') # Espera formato "YYYY-MM-DD"
+    notes = data.get('notes')
+
+    if not culture_id or not planting_date_str:
+        return jsonify({"message": "culture_id e planting_date são obrigatórios."}), 400
+
+    try:
+        planting_date = datetime.strptime(planting_date_str, "%Y-%m-%d").date()
+    except ValueError:
+        return jsonify({"message": "Formato de data inválido. Use YYYY-MM-DD."}), 400
+
+    # Lógica de previsão de colheita (exemplo simples, pode ser movida para um helper)
+    # No futuro, o app pode enviar a previsão, ou o backend pode calcular
+    predicted_harvest_date = planting_date + timedelta(days=90) # Exemplo: 90 dias
+
+    new_planting = PlantedCulture(
+        user_id=user_id,
+        culture_id=culture_id,
+        planting_date=planting_date,
+        predicted_harvest_date=predicted_harvest_date,
+        notes=notes
+    )
+    db.session.add(new_planting)
+    db.session.commit()
+
+    return jsonify(new_planting.to_dict()), 201
+
+@app.route("/api/planted-cultures", methods=["GET"])
+@jwt_required()
+def get_user_planted_cultures():
+    """ Retorna todos os plantios do usuário logado. """
+    user_id = int(get_jwt_identity())
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify({"message": "Utilizador não encontrado."}), 404
+        
+    return jsonify([planting.to_dict() for planting in user.planted_cultures]), 200
+
+@app.route("/api/planted-cultures/<int:planted_culture_id>/history", methods=["POST"])
+@jwt_required()
+def add_history_event(planted_culture_id):
+    """ Adiciona um evento de histórico a um plantio específico. """
+    user_id = int(get_jwt_identity())
+    
+    planting = PlantedCulture.query.filter_by(id=planted_culture_id, user_id=user_id).first()
+    if not planting:
+        return jsonify({"message": "Plantio não encontrado ou não pertence a este utilizador."}), 404
+
+    data = request.get_json()
+    event_type_str = data.get('event_type')
+    observation = data.get('observation')
+
+    if not event_type_str:
+        return jsonify({"message": "event_type é obrigatório."}), 400
+
+    try:
+        # Converte a string do JSON para o nosso Enum
+        event_type = EventType[event_type_str.upper()]
+    except KeyError:
+        return jsonify({"message": f"Tipo de evento inválido: {event_type_str}"}), 400
+
+    new_event = HistoryEvent(
+        planted_culture_id=planted_culture_id,
+        event_type=event_type,
+        observation=observation
+    )
+    db.session.add(new_event)
+    db.session.commit()
+    
+    return jsonify(new_event.to_dict()), 201
 
