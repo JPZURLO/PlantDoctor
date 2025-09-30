@@ -34,12 +34,16 @@ class Culture(db.Model):
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), unique=True, nullable=False)
     image_url = db.Column(db.String(255), nullable=False)
+    # ▼▼▼ ADICIONE ESTA LINHA ▼▼▼
+    cycle_days = db.Column(db.Integer, nullable=False, default=90) # Adiciona o ciclo em dias
 
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
-            'image_url': self.image_url
+            'image_url': self.image_url,
+            # ▼▼▼ E ADICIONE ESTA LINHA TAMBÉM ▼▼▼
+            'cycle_days': self.cycle_days 
         }
 
 # ==========================================================
