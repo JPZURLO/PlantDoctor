@@ -130,3 +130,28 @@ class Doubt(db.Model):
             'created_at': self.created_at.isoformat(),
             'author_name': 'Anônimo' if self.is_anonymous else self.author.name
         }
+
+# No final do arquivo models.py
+
+class Suggestion(db.Model):
+    """ Representa uma sugestão postada por um usuário. """
+    __tablename__ = 'suggestions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    suggestion_text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+
+    # Chave Estrangeira para saber quem sugeriu
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    # Relação para acessar os dados do usuário
+    author = db.relationship('User', backref='suggestions')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'suggestion_text': self.suggestion_text,
+            'created_at': self.created_at.isoformat(),
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+        }
