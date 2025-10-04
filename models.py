@@ -1,15 +1,20 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
-from sqlalchemy import Enum as SQLAlchemyEnum # Importação necessária
-import enum # Importação necessária
+from sqlalchemy import Enum as SQLAlchemyEnum
+import enum
 
 db = SQLAlchemy()
 
-# Tabela de associação para a relação muitos-para-muitos entre User e Culture (INTERESSES)
+# Tabela de associação
 user_cultures = db.Table('user_cultures',
     db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
     db.Column('culture_id', db.Integer, db.ForeignKey('culture.id'), primary_key=True)
 )
+
+# ▼▼▼ ENUM PARA O TIPO DE USUÁRIO (FALTANDO NO SEU CÓDIGO) ▼▼▼
+class UserType(enum.Enum):
+    COMMON = "COMMON"
+    ADMIN = "ADMIN"
 
 class User(db.Model):
     __tablename__ = 'users'
@@ -19,51 +24,52 @@ class User(db.Model):
     password_hash = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
-    # Relação para as culturas de INTERESSE do usuário
+    # ▼▼▼ COLUNA DO TIPO DE USUÁRIO (FALTANDO NO SEU CÓDIGO) ▼▼▼
+    user_type = db.Column(SQLAlchemyEnum(UserType), nullable=False, default=UserType.COMMON)
+
     cultures = db.relationship('Culture', secondary=user_cultures, lazy='subquery',
                                backref=db.backref('interested_users', lazy=True))
-
-    # ✅ NOVA RELAÇÃO: Um usuário pode ter vários plantios.
+    
     planted_cultures = db.relationship('PlantedCulture', backref='user', lazy=True, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f'<User {self.email}>'
+    
+    # ▼▼▼ FUNÇÃO to_dict PARA RETORNAR DADOS DO USUÁRIO (FALTANDO NO SEU CÓDIGO) ▼▼▼
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'email': self.email,
+            'user_type': self.user_type.name
+        }
 
 class Culture(db.Model):
     __tablename__ = 'culture'
     id = db.Column(db.Integer, primary_key=True)
     name = db.Column(db.String(50), unique=True, nullable=False)
     image_url = db.Column(db.String(255), nullable=False)
-    # ▼▼▼ ADICIONE ESTA LINHA ▼▼▼
-    cycle_days = db.Column(db.Integer, nullable=False, default=90) # Adiciona o ciclo em dias
+    cycle_days = db.Column(db.Integer, nullable=False, default=90)
 
     def to_dict(self):
         return {
             'id': self.id,
             'name': self.name,
             'image_url': self.image_url,
-            # ▼▼▼ E ADICIONE ESTA LINHA TAMBÉM ▼▼▼
             'cycle_days': self.cycle_days 
         }
 
-# ==========================================================
-# ▼▼▼ NOVOS MODELOS ADICIONADOS AQUI ▼▼▼
-# ==========================================================
-
 class PlantedCulture(db.Model):
-    """ Representa uma instância específica de uma cultura plantada por um usuário. """
     __tablename__ = 'planted_culture'
     
     id = db.Column(db.Integer, primary_key=True)
     planting_date = db.Column(db.Date, nullable=False)
     predicted_harvest_date = db.Column(db.Date, nullable=True)
-    notes = db.Column(db.Text, nullable=True) # Um campo para anotações gerais
+    notes = db.Column(db.Text, nullable=True)
     
-    # Chaves Estrangeiras
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     culture_id = db.Column(db.Integer, db.ForeignKey('culture.id'), nullable=False)
     
-    # Relações
     culture = db.relationship('Culture', backref='planted_instances')
     history_events = db.relationship('HistoryEvent', backref='planted_culture', lazy=True, cascade="all, delete-orphan")
 
@@ -74,7 +80,7 @@ class PlantedCulture(db.Model):
             'predicted_harvest_date': self.predicted_harvest_date.isoformat() if self.predicted_harvest_date else None,
             'notes': self.notes,
             'user_id': self.user_id,
-            'culture': self.culture.to_dict(), # Inclui os dados da cultura (nome, imagem)
+            'culture': self.culture.to_dict(),
             'history_events': [event.to_dict() for event in self.history_events]
         }
 
@@ -87,7 +93,6 @@ class EventType(enum.Enum):
     OUTRO = "OUTRO"
 
 class HistoryEvent(db.Model):
-    """ Representa um evento no histórico de uma cultura plantada. """
     __tablename__ = 'history_event'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -95,21 +100,17 @@ class HistoryEvent(db.Model):
     event_type = db.Column(SQLAlchemyEnum(EventType), nullable=False)
     observation = db.Column(db.Text, nullable=True)
     
-    # Chave Estrangeira
     planted_culture_id = db.Column(db.Integer, db.ForeignKey('planted_culture.id'), nullable=False)
 
     def to_dict(self):
         return {
             'id': self.id,
             'event_date': self.event_date.isoformat(),
-            'event_type': self.event_type.name, # Retorna o nome do enum (ex: "ADUBAGEM")
+            'event_type': self.event_type.name,
             'observation': self.observation
         }
 
-# No final do arquivo models.py
-
 class Doubt(db.Model):
-    """ Representa uma dúvida postada por um usuário. """
     __tablename__ = 'doubts'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -117,10 +118,7 @@ class Doubt(db.Model):
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
 
-    # Chave Estrangeira para saber quem perguntou
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-
-    # Relação para acessar os dados do usuário a partir da dúvida
     author = db.relationship('User', backref='doubts')
 
     def to_dict(self):
@@ -131,10 +129,7 @@ class Doubt(db.Model):
             'author_name': 'Anônimo' if self.is_anonymous else self.author.name
         }
 
-# No final do arquivo models.py
-
 class Suggestion(db.Model):
-    """ Representa uma sugestão postada por um usuário. """
     __tablename__ = 'suggestions'
 
     id = db.Column(db.Integer, primary_key=True)
@@ -142,10 +137,7 @@ class Suggestion(db.Model):
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
 
-    # Chave Estrangeira para saber quem sugeriu
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
-
-    # Relação para acessar os dados do usuário
     author = db.relationship('User', backref='suggestions')
 
     def to_dict(self):
