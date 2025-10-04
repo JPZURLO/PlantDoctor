@@ -3,11 +3,11 @@ from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
-# Linha de importação unificada
-from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt, Suggestion
-from sqlalchemy import func 
+from sqlalchemy import func
+from functools import wraps # ✅ 1. IMPORTAÇÃO ADICIONADA
 
-
+# ✅ 2. SUGESTÃO REMOVIDA TEMPORARIAMENTE DA IMPORTAÇÃO
+from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt, UserType
 
 app = Flask(__name__)
 
@@ -51,14 +51,14 @@ def login():
     
     user = User.query.filter_by(email=email).first()
     if user and check_password_hash(user.password_hash, password):
-        # Converte o ID do usuário (que é um número) para uma string para o token
         access_token = create_access_token(identity=str(user.id))
         has_cultures = len(user.cultures) > 0
         
         return jsonify({
             "message": "Login bem-sucedido!",
             "token": access_token,
-            "has_cultures": has_cultures
+            "has_cultures": has_cultures,
+            "user_role": user.user_type.name # ✅ 3. CAMPO ESSENCIAL ADICIONADO DE VOLTA
         }), 200
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
@@ -120,12 +120,11 @@ def get_my_cultures():
 @app.route("/api/planted-cultures", methods=["POST"])
 @jwt_required()
 def add_planted_culture():
-    """ Cria um novo registo de plantio para o usuário logado. """
     user_id = int(get_jwt_identity())
     data = request.get_json()
     
     culture_id = data.get('culture_id')
-    planting_date_str = data.get('planting_date') # Espera formato "YYYY-MM-DD"
+    planting_date_str = data.get('planting_date')
     notes = data.get('notes')
 
     if not culture_id or not planting_date_str:
@@ -136,7 +135,6 @@ def add_planted_culture():
     except ValueError:
         return jsonify({"message": "Formato de data inválido. Use YYYY-MM-DD."}), 400
 
-    # ▼▼▼ LÓGICA DE PREVISÃO CORRIGIDA E MELHORADA ▼▼▼
     culture = Culture.query.get(culture_id)
     if not culture:
         return jsonify({"message": "Cultura não encontrada."}), 404
@@ -158,7 +156,6 @@ def add_planted_culture():
 @app.route("/api/planted-cultures", methods=["GET"])
 @jwt_required()
 def get_user_planted_cultures():
-    """ Retorna todos os plantios do usuário logado. """
     user_id = int(get_jwt_identity())
     user = User.query.get(user_id)
     if not user:
@@ -169,7 +166,6 @@ def get_user_planted_cultures():
 @app.route("/api/planted-cultures/<int:planted_culture_id>/history", methods=["POST"])
 @jwt_required()
 def add_history_event(planted_culture_id):
-    """ Adiciona um evento de histórico a um plantio específico. """
     user_id = int(get_jwt_identity())
     
     planting = PlantedCulture.query.filter_by(id=planted_culture_id, user_id=user_id).first()
@@ -198,11 +194,94 @@ def add_history_event(planted_culture_id):
     
     return jsonify(new_event.to_dict()), 201
 
+# --- ROTAS DE DÚVIDAS ---
+@app.route("/api/doubts", methods=["POST"])
+@jwt_required()
+def post_doubt():
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    question_text = data.get('question_text')
+    is_anonymous = data.get('is_anonymous', False)
+
+    if not question_text:
+        return jsonify({"message": "O texto da pergunta é obrigatório."}), 400
+
+    new_doubt = Doubt(
+        question_text=question_text,
+        user_id=user_id,
+        is_anonymous=is_anonymous
+    )
+    db.session.add(new_doubt)
+    db.session.commit()
+    return jsonify(new_doubt.to_dict()), 201
+
+@app.route("/api/doubts", methods=["GET"])
+@jwt_required()
+def get_doubts():
+    all_doubts = Doubt.query.order_by(Doubt.created_at.desc()).all()
+    return jsonify([doubt.to_dict() for doubt in all_doubts]), 200
+
+# --- ROTA DE RANKING ---
+@app.route("/api/cultures/ranking", methods=["GET"])
+@jwt_required()
+def get_culture_ranking():
+    try:
+        ranking_data = db.session.query(
+            Culture.name,
+            func.count(PlantedCulture.id).label('count')
+        ).join(Culture, PlantedCulture.culture_id == Culture.id).group_by(Culture.name).order_by(func.count(PlantedCulture.id).desc()).all()
+        result = [{"name": name, "count": count} for name, count in ranking_data]
+        return jsonify(result), 200
+    except Exception as e:
+        app.logger.error(f"Erro ao calcular ranking: {e}")
+        return jsonify({"message": "Erro interno ao gerar o ranking."}), 500
+
+# --- ✅ 4. CÓDIGO DE ADMIN ADICIONADO DE VOLTA ---
+
+def admin_required():
+    def wrapper(fn):
+        @wraps(fn)
+        @jwt_required()
+        def decorator(*args, **kwargs):
+            current_user_id = int(get_jwt_identity())
+            user = User.query.get(current_user_id)
+            if user and user.user_type == UserType.ADMIN:
+                return fn(*args, **kwargs)
+            else:
+                return jsonify(message="Acesso restrito a administradores."), 403
+        return decorator
+    return wrapper
+
+@app.route("/api/admin/users", methods=["GET"])
+@admin_required()
+def get_all_users():
+    users = User.query.all()
+    return jsonify([user.to_dict() for user in users]), 200
+
+@app.route("/api/admin/users/<int:user_id>/role", methods=["PUT"])
+@admin_required()
+def update_user_role(user_id):
+    user_to_update = User.query.get(user_id)
+    if not user_to_update:
+        return jsonify(message="Usuário não encontrado."), 404
+    
+    data = request.get_json()
+    new_role_str = data.get('role', '').upper()
+
+    try:
+        new_role = UserType[new_role_str]
+    except KeyError:
+        return jsonify(message=f"Tipo de usuário inválido. Use 'COMMON' ou 'ADMIN'."), 400
+    
+    user_to_update.user_type = new_role
+    db.session.commit()
+    
+    return jsonify(user_to_update.to_dict()), 200
+
 # --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
     if Culture.query.first() is None:
         print(">>> Base de dados vazia. A popular com culturas...")
-        # ▼▼▼ DADOS ATUALIZADOS COM 'cycle_days' ▼▼▼
         cultures_to_add = [
             Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png", cycle_days=120),
             Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png", cycle_days=1095),
@@ -225,101 +304,6 @@ def seed_data():
 
 if __name__ == '__main__':
     with app.app_context():
-        # Cria todas as tabelas do banco de dados (caso não existam)
         db.create_all()
-        
-        # Chama a função para popular com os dados iniciais
         seed_data()
-        
-    # Inicia o servidor de desenvolvimento
     app.run(debug=True)
-
-
-# No final do arquivo app.py
-
-# --- ROTAS DE DÚVIDAS ---
-
-@app.route("/api/doubts", methods=["POST"])
-@jwt_required()
-def post_doubt():
-    """ Cria uma nova dúvida para o usuário logado. """
-    user_id = int(get_jwt_identity())
-    data = request.get_json()
-
-    question_text = data.get('question_text')
-    is_anonymous = data.get('is_anonymous', False) # O padrão é não ser anônimo
-
-    if not question_text:
-        return jsonify({"message": "O texto da pergunta é obrigatório."}), 400
-
-    new_doubt = Doubt(
-        question_text=question_text,
-        user_id=user_id,
-        is_anonymous=is_anonymous
-    )
-    db.session.add(new_doubt)
-    db.session.commit()
-
-    return jsonify(new_doubt.to_dict()), 201
-
-@app.route("/api/doubts", methods=["GET"])
-@jwt_required()
-def get_doubts():
-    """ Retorna todas as dúvidas, das mais recentes para as mais antigas. """
-    
-    # Ordena pela data de criação em ordem decrescente (mais novas primeiro)
-    all_doubts = Doubt.query.order_by(Doubt.created_at.desc()).all()
-        
-    return jsonify([doubt.to_dict() for doubt in all_doubts]), 200
-
-
-@app.route("/api/suggestions", methods=["POST"])
-@jwt_required()
-def post_suggestion():
-    """ Cria uma nova sugestão para o usuário logado. """
-    user_id = int(get_jwt_identity())
-    data = request.get_json()
-    suggestion_text = data.get('suggestion_text')
-    is_anonymous = data.get('is_anonymous', False)
-
-    if not suggestion_text:
-        return jsonify({"message": "O texto da sugestão é obrigatório."}), 400
-
-    new_suggestion = Suggestion(
-        suggestion_text=suggestion_text,
-        user_id=user_id,
-        is_anonymous=is_anonymous
-    )
-    db.session.add(new_suggestion)
-    db.session.commit()
-    return jsonify(new_suggestion.to_dict()), 201
-
-@app.route("/api/suggestions", methods=["GET"])
-@jwt_required()
-def get_suggestions():
-    """ Retorna todas as sugestões, das mais recentes para as mais antigas. """
-    all_suggestions = Suggestion.query.order_by(Suggestion.created_at.desc()).all()
-    return jsonify([suggestion.to_dict() for suggestion in all_suggestions]), 200
-
-
-@app.route("/api/cultures/ranking", methods=["GET"])
-@jwt_required()
-def get_culture_ranking():
-    """
-    Calcula e retorna o número de vezes que cada cultura foi plantada,
-    ordenado pela mais usada.
-    """
-    try:
-        # Consulta que agrupa os plantios por cultura e conta quantos existem em cada grupo
-        ranking_data = db.session.query(
-            Culture.name,
-            func.count(PlantedCulture.id).label('count')
-        ).join(Culture, PlantedCulture.culture_id == Culture.id).group_by(Culture.name).order_by(func.count(PlantedCulture.id).desc()).all()
-
-        # Transforma o resultado em uma lista de dicionários
-        result = [{"name": name, "count": count} for name, count in ranking_data]
-        
-        return jsonify(result), 200
-    except Exception as e:
-        app.logger.error(f"Erro ao calcular ranking: {e}")
-        return jsonify({"message": "Erro interno ao gerar o ranking."}), 500
