@@ -105,3 +105,28 @@ class HistoryEvent(db.Model):
             'event_type': self.event_type.name, # Retorna o nome do enum (ex: "ADUBAGEM")
             'observation': self.observation
         }
+
+# No final do arquivo models.py
+
+class Doubt(db.Model):
+    """ Representa uma dúvida postada por um usuário. """
+    __tablename__ = 'doubts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    question_text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+
+    # Chave Estrangeira para saber quem perguntou
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    # Relação para acessar os dados do usuário a partir da dúvida
+    author = db.relationship('User', backref='doubts')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'question_text': self.question_text,
+            'created_at': self.created_at.isoformat(),
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+        }
