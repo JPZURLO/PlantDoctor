@@ -4,10 +4,13 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 from sqlalchemy import func
-from functools import wraps # ✅ 1. IMPORTAÇÃO ADICIONADA
+from functools import wraps
 
-# ✅ 2. SUGESTÃO REMOVIDA TEMPORARIAMENTE DA IMPORTAÇÃO
-from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt, UserType
+# Importa todos os modelos necessários
+from models import (
+    db, User, Culture, PlantedCulture, HistoryEvent,
+    EventType, Doubt, Suggestion, UserType, UserEditHistory
+)
 
 app = Flask(__name__)
 
@@ -24,6 +27,21 @@ app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-ke
 db.init_app(app)
 jwt = JWTManager(app)
 
+# --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
+def admin_required():
+    def wrapper(fn):
+        @wraps(fn)
+        @jwt_required()
+        def decorator(*args, **kwargs):
+            current_user_id = int(get_jwt_identity())
+            user = User.query.get(current_user_id)
+            if user and user.user_type == UserType.ADMIN:
+                return fn(*args, **kwargs)
+            else:
+                return jsonify(message="Acesso restrito a administradores."), 403
+        return decorator
+    return wrapper
+
 # --- ROTAS DE AUTENTICAÇÃO ---
 @app.route("/api/auth/register", methods=["POST"])
 def register():
@@ -34,7 +52,7 @@ def register():
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
     if User.query.filter_by(email=email).first():
-        return jsonify({"message": "Este e-mail já está registado. Por favor, tente fazer login."}), 409
+        return jsonify({"message": "Este e-mail já está registado."}), 409
     hashed_password = generate_password_hash(password)
     new_user = User(name=name, email=email, password_hash=hashed_password)
     db.session.add(new_user)
@@ -58,10 +76,74 @@ def login():
             "message": "Login bem-sucedido!",
             "token": access_token,
             "has_cultures": has_cultures,
-            "user_role": user.user_type.name # ✅ 3. CAMPO ESSENCIAL ADICIONADO DE VOLTA
+            "user_role": user.user_type.name
         }), 200
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
+
+# --- ROTAS DE ADMINISTRAÇÃO ---
+@app.route("/api/admin/users", methods=["GET"])
+@admin_required()
+def get_all_users():
+    users = User.query.order_by(User.name).all()
+    return jsonify([user.to_dict() for user in users]), 200
+
+# ✅ FUNÇÃO AUXILIAR PARA REGISTRAR HISTÓRICO (ADICIONADA DE VOLTA)
+def log_user_change(edited_user, admin_user_id, field, old_value, new_value):
+    if str(old_value) != str(new_value):
+        history_entry = UserEditHistory(
+            edited_user_id=edited_user.id,
+            edited_by_user_id=admin_user_id,
+            field_changed=field,
+            old_value=str(old_value),
+            new_value=str(new_value)
+        )
+        db.session.add(history_entry)
+
+@app.route("/api/admin/users/<int:user_id>", methods=["PUT"])
+@admin_required()
+def update_user(user_id):
+    admin_id = int(get_jwt_identity())
+    user_to_update = User.query.get(user_id)
+    if not user_to_update:
+        return jsonify(message="Usuário não encontrado."), 404
+    
+    data = request.get_json()
+
+    if 'name' in data:
+        log_user_change(user_to_update, admin_id, 'name', user_to_update.name, data['name'])
+        user_to_update.name = data['name']
+    
+    if 'email' in data:
+        log_user_change(user_to_update, admin_id, 'email', user_to_update.email, data['email'])
+        user_to_update.email = data['email']
+        
+    if 'password' in data and data['password']:
+        log_user_change(user_to_update, admin_id, 'password', 'N/A', 'Atualizada')
+        user_to_update.password_hash = generate_password_hash(data['password'])
+
+    if 'user_type' in data:
+        new_role_str = data.get('user_type', '').upper()
+        try:
+            new_role = UserType[new_role_str]
+            log_user_change(user_to_update, admin_id, 'user_type', user_to_update.user_type.name, new_role.name)
+            user_to_update.user_type = new_role
+        except KeyError:
+            return jsonify(message="Tipo de usuário inválido."), 400
+            
+    db.session.commit()
+    return jsonify(user_to_update.to_dict()), 200
+
+@app.route("/api/admin/users/<int:user_id>/history", methods=["GET"])
+@admin_required()
+def get_user_history(user_id):
+    user = User.query.get(user_id)
+    if not user:
+        return jsonify(message="Usuário não encontrado."), 404
+    
+    history = UserEditHistory.query.filter_by(edited_user_id=user_id).order_by(UserEditHistory.changed_at.desc()).all()
+    return jsonify([entry.to_dict() for entry in history]), 200
+
 
 # --- ROTAS DE CULTURAS (GERAL) ---
 @app.route("/api/cultures", methods=["GET"])
@@ -236,47 +318,32 @@ def get_culture_ranking():
         app.logger.error(f"Erro ao calcular ranking: {e}")
         return jsonify({"message": "Erro interno ao gerar o ranking."}), 500
 
-# --- ✅ 4. CÓDIGO DE ADMIN ADICIONADO DE VOLTA ---
-
-def admin_required():
-    def wrapper(fn):
-        @wraps(fn)
-        @jwt_required()
-        def decorator(*args, **kwargs):
-            current_user_id = int(get_jwt_identity())
-            user = User.query.get(current_user_id)
-            if user and user.user_type == UserType.ADMIN:
-                return fn(*args, **kwargs)
-            else:
-                return jsonify(message="Acesso restrito a administradores."), 403
-        return decorator
-    return wrapper
-
-@app.route("/api/admin/users", methods=["GET"])
-@admin_required()
-def get_all_users():
-    users = User.query.all()
-    return jsonify([user.to_dict() for user in users]), 200
-
-@app.route("/api/admin/users/<int:user_id>/role", methods=["PUT"])
-@admin_required()
-def update_user_role(user_id):
-    user_to_update = User.query.get(user_id)
-    if not user_to_update:
-        return jsonify(message="Usuário não encontrado."), 404
-    
+# ✅ ROTAS DE SUGESTÕES (ADICIONADAS DE VOLTA)
+@app.route("/api/suggestions", methods=["POST"])
+@jwt_required()
+def post_suggestion():
+    user_id = int(get_jwt_identity())
     data = request.get_json()
-    new_role_str = data.get('role', '').upper()
+    suggestion_text = data.get('suggestion_text')
+    is_anonymous = data.get('is_anonymous', False)
 
-    try:
-        new_role = UserType[new_role_str]
-    except KeyError:
-        return jsonify(message=f"Tipo de usuário inválido. Use 'COMMON' ou 'ADMIN'."), 400
-    
-    user_to_update.user_type = new_role
+    if not suggestion_text:
+        return jsonify({"message": "O texto da sugestão é obrigatório."}), 400
+
+    new_suggestion = Suggestion(
+        suggestion_text=suggestion_text,
+        user_id=user_id,
+        is_anonymous=is_anonymous
+    )
+    db.session.add(new_suggestion)
     db.session.commit()
-    
-    return jsonify(user_to_update.to_dict()), 200
+    return jsonify(new_suggestion.to_dict()), 201
+
+@app.route("/api/suggestions", methods=["GET"])
+@jwt_required()
+def get_suggestions():
+    all_suggestions = Suggestion.query.order_by(Suggestion.created_at.desc()).all()
+    return jsonify([suggestion.to_dict() for suggestion in all_suggestions]), 200
 
 # --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
 def seed_data():
