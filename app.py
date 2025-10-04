@@ -4,7 +4,8 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 # Linha de importação unificada
-from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType 
+from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt
+
 
 app = Flask(__name__)
 
@@ -230,3 +231,41 @@ if __name__ == '__main__':
         
     # Inicia o servidor de desenvolvimento
     app.run(debug=True)
+
+
+# No final do arquivo app.py
+
+# --- ROTAS DE DÚVIDAS ---
+
+@app.route("/api/doubts", methods=["POST"])
+@jwt_required()
+def post_doubt():
+    """ Cria uma nova dúvida para o usuário logado. """
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+
+    question_text = data.get('question_text')
+    is_anonymous = data.get('is_anonymous', False) # O padrão é não ser anônimo
+
+    if not question_text:
+        return jsonify({"message": "O texto da pergunta é obrigatório."}), 400
+
+    new_doubt = Doubt(
+        question_text=question_text,
+        user_id=user_id,
+        is_anonymous=is_anonymous
+    )
+    db.session.add(new_doubt)
+    db.session.commit()
+
+    return jsonify(new_doubt.to_dict()), 201
+
+@app.route("/api/doubts", methods=["GET"])
+@jwt_required()
+def get_doubts():
+    """ Retorna todas as dúvidas, das mais recentes para as mais antigas. """
+    
+    # Ordena pela data de criação em ordem decrescente (mais novas primeiro)
+    all_doubts = Doubt.query.order_by(Doubt.created_at.desc()).all()
+        
+    return jsonify([doubt.to_dict() for doubt in all_doubts]), 200
