@@ -147,3 +147,34 @@ class Suggestion(db.Model):
             'created_at': self.created_at.isoformat(),
             'author_name': 'Anônimo' if self.is_anonymous else self.author.name
         }
+
+class UserEditHistory(db.Model):
+    """ Registra as alterações feitas nos perfis de usuário. """
+    __tablename__ = 'user_edit_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Qual usuário foi editado
+    edited_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    # Quem fez a edição (o admin logado)
+    edited_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    field_changed = db.Column(db.String(50), nullable=False) # Ex: 'name', 'email', 'user_type'
+    old_value = db.Column(db.Text, nullable=True)
+    new_value = db.Column(db.Text, nullable=True)
+    changed_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+    # Relações para podermos buscar os nomes
+    edited_user = db.relationship('User', foreign_keys=[edited_user_id], backref='edit_history')
+    editor = db.relationship('User', foreign_keys=[edited_by_user_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'field_changed': self.field_changed,
+            'old_value': self.old_value,
+            'new_value': self.new_value,
+            'changed_at': self.changed_at.isoformat(),
+            'editor_name': self.editor.name
+        }
