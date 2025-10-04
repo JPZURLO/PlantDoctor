@@ -4,7 +4,7 @@ from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 # Linha de importação unificada
-from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt
+from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt, Suggestion
 
 
 app = Flask(__name__)
@@ -269,3 +269,32 @@ def get_doubts():
     all_doubts = Doubt.query.order_by(Doubt.created_at.desc()).all()
         
     return jsonify([doubt.to_dict() for doubt in all_doubts]), 200
+
+
+@app.route("/api/suggestions", methods=["POST"])
+@jwt_required()
+def post_suggestion():
+    """ Cria uma nova sugestão para o usuário logado. """
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    suggestion_text = data.get('suggestion_text')
+    is_anonymous = data.get('is_anonymous', False)
+
+    if not suggestion_text:
+        return jsonify({"message": "O texto da sugestão é obrigatório."}), 400
+
+    new_suggestion = Suggestion(
+        suggestion_text=suggestion_text,
+        user_id=user_id,
+        is_anonymous=is_anonymous
+    )
+    db.session.add(new_suggestion)
+    db.session.commit()
+    return jsonify(new_suggestion.to_dict()), 201
+
+@app.route("/api/suggestions", methods=["GET"])
+@jwt_required()
+def get_suggestions():
+    """ Retorna todas as sugestões, das mais recentes para as mais antigas. """
+    all_suggestions = Suggestion.query.order_by(Suggestion.created_at.desc()).all()
+    return jsonify([suggestion.to_dict() for suggestion in all_suggestions]), 200
