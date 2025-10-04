@@ -5,6 +5,8 @@ from flask_jwt_extended import create_access_token, JWTManager, jwt_required, ge
 from datetime import datetime, timedelta
 # Linha de importação unificada
 from models import db, User, Culture, PlantedCulture, HistoryEvent, EventType, Doubt, Suggestion
+from sqlalchemy import func 
+
 
 
 app = Flask(__name__)
@@ -298,3 +300,26 @@ def get_suggestions():
     """ Retorna todas as sugestões, das mais recentes para as mais antigas. """
     all_suggestions = Suggestion.query.order_by(Suggestion.created_at.desc()).all()
     return jsonify([suggestion.to_dict() for suggestion in all_suggestions]), 200
+
+
+@app.route("/api/cultures/ranking", methods=["GET"])
+@jwt_required()
+def get_culture_ranking():
+    """
+    Calcula e retorna o número de vezes que cada cultura foi plantada,
+    ordenado pela mais usada.
+    """
+    try:
+        # Consulta que agrupa os plantios por cultura e conta quantos existem em cada grupo
+        ranking_data = db.session.query(
+            Culture.name,
+            func.count(PlantedCulture.id).label('count')
+        ).join(Culture, PlantedCulture.culture_id == Culture.id).group_by(Culture.name).order_by(func.count(PlantedCulture.id).desc()).all()
+
+        # Transforma o resultado em uma lista de dicionários
+        result = [{"name": name, "count": count} for name, count in ranking_data]
+        
+        return jsonify(result), 200
+    except Exception as e:
+        app.logger.error(f"Erro ao calcular ranking: {e}")
+        return jsonify({"message": "Erro interno ao gerar o ranking."}), 500
