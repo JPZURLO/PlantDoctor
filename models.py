@@ -1,6 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
-from sqlalchemy import Enum as SQLAlchemyEnum
+from sqlalchemy import Enum as SQLAlchemyEnum, Column, Integer, String, DateTime, ForeignKey # Importações adicionais para o novo modelo
+from sqlalchemy.orm import relationship # Importações adicionais para o novo modelo
 import enum
 
 db = SQLAlchemy()
@@ -11,7 +12,7 @@ user_cultures = db.Table('user_cultures',
     db.Column('culture_id', db.Integer, db.ForeignKey('culture.id'), primary_key=True)
 )
 
-# ▼▼▼ ENUM PARA O TIPO DE USUÁRIO (FALTANDO NO SEU CÓDIGO) ▼▼▼
+# ▼▼▼ ENUM PARA O TIPO DE USUÁRIO ▼▼▼
 class UserType(enum.Enum):
     COMMON = "COMMON"
     ADMIN = "ADMIN"
@@ -24,18 +25,18 @@ class User(db.Model):
     password_hash = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
 
-    # ▼▼▼ COLUNA DO TIPO DE USUÁRIO (FALTANDO NO SEU CÓDIGO) ▼▼▼
+    # ▼▼▼ COLUNA DO TIPO DE USUÁRIO ▼▼▼
     user_type = db.Column(SQLAlchemyEnum(UserType), nullable=False, default=UserType.COMMON)
 
     cultures = db.relationship('Culture', secondary=user_cultures, lazy='subquery',
-                               backref=db.backref('interested_users', lazy=True))
+                                backref=db.backref('interested_users', lazy=True))
     
     planted_cultures = db.relationship('PlantedCulture', backref='user', lazy=True, cascade="all, delete-orphan")
 
     def __repr__(self):
         return f'<User {self.email}>'
     
-    # ▼▼▼ FUNÇÃO to_dict PARA RETORNAR DADOS DO USUÁRIO (FALTANDO NO SEU CÓDIGO) ▼▼▼
+    # ▼▼▼ FUNÇÃO to_dict PARA RETORNAR DADOS DO USUÁRIO ▼▼▼
     def to_dict(self):
         return {
             'id': self.id,
@@ -178,3 +179,25 @@ class UserEditHistory(db.Model):
             'changed_at': self.changed_at.isoformat(),
             'editor_name': self.editor.name
         }
+
+# ▼▼▼ NOVO: MODELO PARA RASTREAR TOKENS DE RECUPERAÇÃO DE SENHA ▼▼▼
+class PasswordResetToken(db.Model):
+    """ Armazena tokens temporários para redefinição de senha. """
+    __tablename__ = 'password_reset_tokens'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    
+    # Chave estrangeira para o usuário
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    
+    # O token de redefinição real (JWT)
+    token = db.Column(db.String(255), unique=True, nullable=False)
+    
+    # Data e hora de expiração do token
+    expires_at = db.Column(db.DateTime, nullable=False)
+    
+    # Relacionamento com o usuário
+    user = db.relationship('User', backref='reset_tokens')
+    
+    def __repr__(self):
+        return f"<PasswordResetToken user_id={self.user_id}>"
