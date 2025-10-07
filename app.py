@@ -7,8 +7,8 @@ from sqlalchemy import func
 from functools import wraps
 import threading
 
-# NOVO: Importações do Flask-Mail
-from flask_mail import Mail, Message
+# NOVO: Usamos requests para a API HTTP do Brevo
+import requests
 
 # Importa todos os modelos necessários
 from models import (
@@ -27,58 +27,63 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
-# --- NOVO: Configuração do Flask-Mail (lendo do Render ENVs) ---
-app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
-app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
-app.config['MAIL_USE_SSL'] = os.environ.get('MAIL_USE_SSL', 'True').lower() in ('true', '1', 't')
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
-# --- FIM DA CONFIGURAÇÃO DO FLASK-MAIL ---
+# --- CONFIGURAÇÃO BREVO/E-MAIL ---
+BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
+SENDER_EMAIL = os.environ.get('MAIL_SENDER_EMAIL')
+BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+# --- FIM DA CONFIGURAÇÃO DE E-MAIL ---
 
 
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-mail = Mail(app) # NOVO: Inicialização do Mail
+# REMOVIDO: mail = Mail(app) # Não usamos mais Flask-Mail
 
-def send_async_email(app, msg):
-    # O mail.send DEVE ser executado dentro do app_context da thread
-    with app.app_context():
-        try:
-            mail.send(msg)
-            print(f">>> E-mail de boas-vindas enviado para {msg.recipients[0]}")
-        except Exception as e:
-            # Você verá erros de envio APENAS nos logs, mas a rota não irá expirar.
-            app.logger.error(f"ERRO CRÍTICO ao enviar e-mail (Async Flask-Mail): {e}")
 
-# --- FUNÇÃO AUXILIAR DE E-MAIL ---
-def send_welcome_email(recipient_email, name):
-    # Verifica se as configurações básicas de e-mail estão presentes
-    if not app.config.get('MAIL_USERNAME'):
-        app.logger.error("Configuração de e-mail ausente. E-mail de boas-vindas não enviado.")
-        return False
-        
-    msg = Message(
-        subject="Bem-vindo(a) ao Plant Doctor!",
-        recipients=[recipient_email],
-        html=f"""
+# --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
+def send_brevo_email_async(recipient_email, name):
+    """Função que envia o e-mail via API do Brevo (HTTPS), rodando em uma thread."""
+    if not BREVO_API_KEY or not SENDER_EMAIL:
+        app.logger.error("Configuração Brevo ausente. E-mail não enviado.")
+        return
+
+    headers = {
+        "accept": "application/json",
+        "api-key": BREVO_API_KEY,
+        "content-type": "application/json"
+    }
+    
+    data = {
+        "sender": {"name": "Plant Doctor", "email": SENDER_EMAIL},
+        "to": [{"email": recipient_email, "name": name}],
+        "subject": "Bem-vindo(a) ao Plant Doctor!",
+        "htmlContent": f"""
             <html>
                 <body>
                     <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
-                    <p>Seu registro foi concluído com sucesso. Estamos felizes em tê-lo(a) conosco.</p>
-                    <p>Acesse o aplicativo para gerir suas culturas.</p>
+                    <p>Seu registro foi concluído com sucesso. O envio foi feito via API Brevo.</p>
                 </body>
             </html>
         """
-    )
-    
-    # 1. Executa a função de envio em uma nova thread
-    thr = threading.Thread(target=send_async_email, args=[app, msg])
+    }
+
+    try:
+        response = requests.post(BREVO_API_URL, headers=headers, json=data)
+        response.raise_for_status() 
+        print(f">>> Brevo E-mail enviado. Status: {response.status_code}")
+
+    except requests.exceptions.HTTPError as e:
+        app.logger.error(f"ERRO DE ENVIO BREVO: {e.response.status_code}. Detalhe: {e.response.text}")
+    except Exception as e:
+        app.logger.error(f"Erro inesperado no envio Brevo: {e}")
+
+
+def send_welcome_email(recipient_email, name):
+    """Inicia o envio do e-mail de boas-vindas em uma thread separada."""
+    thr = threading.Thread(target=send_brevo_email_async, args=[recipient_email, name])
     thr.start()
-    
-    # 2. Retorna imediatamente, liberando o worker do Gunicorn
     return True
+# --- FIM DAS FUNÇÕES DE E-MAIL ---
 
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
@@ -116,7 +121,7 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     
-    # CHAMADA DA FUNÇÃO DE E-MAIL AQUI
+    # CHAMADA DA FUNÇÃO DE E-MAIL (agora Brevo Assíncrono)
     send_welcome_email(email, name)
     
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
