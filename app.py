@@ -5,6 +5,7 @@ from flask_jwt_extended import create_access_token, JWTManager, jwt_required, ge
 from datetime import datetime, timedelta
 from sqlalchemy import func
 from functools import wraps
+import threading
 
 # NOVO: Importações do Flask-Mail
 from flask_mail import Mail, Message
@@ -41,6 +42,15 @@ db.init_app(app)
 jwt = JWTManager(app)
 mail = Mail(app) # NOVO: Inicialização do Mail
 
+def send_async_email(app, msg):
+    # O mail.send DEVE ser executado dentro do app_context da thread
+    with app.app_context():
+        try:
+            mail.send(msg)
+            print(f">>> E-mail de boas-vindas enviado para {msg.recipients[0]}")
+        except Exception as e:
+            # Você verá erros de envio APENAS nos logs, mas a rota não irá expirar.
+            app.logger.error(f"ERRO CRÍTICO ao enviar e-mail (Async Flask-Mail): {e}")
 
 # --- FUNÇÃO AUXILIAR DE E-MAIL ---
 def send_welcome_email(recipient_email, name):
@@ -49,30 +59,26 @@ def send_welcome_email(recipient_email, name):
         app.logger.error("Configuração de e-mail ausente. E-mail de boas-vindas não enviado.")
         return False
         
-    try:
-        msg = Message(
-            subject="Bem-vindo(a) ao Plant Doctor!",
-            recipients=[recipient_email],
-            html=f"""
-                <html>
-                    <body>
-                        <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
-                        <p>Seu registro foi concluído com sucesso. Estamos felizes em tê-lo(a) conosco.</p>
-                        <p>Acesse o aplicativo para gerir suas culturas.</p>
-                    </body>
-                </html>
-            """
-        )
-        
-        # O Flask-Mail deve ser enviado dentro do contexto do aplicativo
-        with app.app_context():
-            mail.send(msg)
-            print(f">>> E-mail de boas-vindas enviado para {recipient_email}")
-            return True
-    except Exception as e:
-        app.logger.error(f"ERRO CRÍTICO ao enviar e-mail (Flask-Mail): {e}")
-        return False
-# --- FIM DA FUNÇÃO AUXILIAR DE E-MAIL ---
+    msg = Message(
+        subject="Bem-vindo(a) ao Plant Doctor!",
+        recipients=[recipient_email],
+        html=f"""
+            <html>
+                <body>
+                    <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
+                    <p>Seu registro foi concluído com sucesso. Estamos felizes em tê-lo(a) conosco.</p>
+                    <p>Acesse o aplicativo para gerir suas culturas.</p>
+                </body>
+            </html>
+        """
+    )
+    
+    # 1. Executa a função de envio em uma nova thread
+    thr = threading.Thread(target=send_async_email, args=[app, msg])
+    thr.start()
+    
+    # 2. Retorna imediatamente, liberando o worker do Gunicorn
+    return True
 
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
