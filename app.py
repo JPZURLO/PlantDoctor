@@ -1,5 +1,5 @@
 import os
-import threading # Novo: Para envio assíncrono
+import threading
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
@@ -7,8 +7,15 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from functools import wraps
 
-# NOVO: Importa a classe Mail e Message
-from flask_mail import Mail, Message
+# --- INÍCIO: BLOCO CORRIGIDO PARA USAR SOMENTE SENDGRID ---
+
+# REMOVIDO: from flask_mail import Mail, Message
+
+# ✅ NOVO: Importa a biblioteca SendGrid
+from sendgrid import SendGridAPIClient 
+from sendgrid.helpers.mail import Mail as SGMail, To, Bcc 
+
+# --- FIM: BLOCO CORRIGIDO ---
 
 # Importa todos os modelos necessários
 from models import (
@@ -18,7 +25,7 @@ from models import (
 
 app = Flask(__name__)
 
-# Busca a URL da variável de ambiente (assumindo que está sempre definida no Render)
+# --- Configuração ---
 database_url = os.environ.get('DATABASE_URL') 
 
 # CORREÇÃO CRUCIAL: Substitui o formato 'postgres://' (antigo/Render) pelo 'postgresql://' (exigido pelo driver)
@@ -26,72 +33,84 @@ if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
 # Se a variável de ambiente não estiver definida, você pode querer gerar um erro
-# ou definir um valor padrão (o que não é necessário no Render, mas é bom para o Flask-SQLAlchemy).
 if not database_url:
-    # Isso só ocorreria em um ambiente onde a variável não foi definida
     raise RuntimeError("DATABASE_URL não está definida no ambiente.")
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 
-app.config['SQLALCHEMY_DATABASE_URI'] = database_url
+# 🔴 REMOVIDO: app.config['SQLALCHEMY_DATABASE_URI'] = database_url (DUPLICADO)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
-# 🌟 CONFIGURAÇÕES DO FLASK-MAIL 🌟
-# É crucial usar variáveis de ambiente no Render para estas credenciais (MAIL_USERNAME/MAIL_PASSWORD)
-app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
-app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
-app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
-app.config['MAIL_USE_SSL'] = os.environ.get('MAIL_USE_SSL', 'False').lower() in ('true', '1', 't') # Geralmente True se port=465
-app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'SEU_EMAIL_DE_ENVIO@gmail.com') # Substitua pelo seu email
-app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', 'SUA_SENHA_DE_APP') # Use Senha de App se for Gmail
-app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 'Plant Doctor <SEU_EMAIL_DE_ENVIO@gmail.com>')
+# ❌ REMOVIDAS TODAS AS CONFIGURAÇÕES ANTIGAS DO FLASK-MAIL A PARTIR DAQUI ❌
 
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-mail = Mail(app) # ✅ INICIALIZAÇÃO DO FLASK-MAIL
+# ❌ REMOVIDO: mail = Mail(app) # Remove a inicialização do Flask-Mail
 
 # ----------------------------------------------------
-# 📧 FUNÇÕES AUXILIARES DE E-MAIL 📧
+# 📧 FUNÇÕES AUXILIARES DE E-MAIL (AGORA COM SENDGRID) 📧
 # ----------------------------------------------------
 
-def send_email_async(app, msg):
-    """ Envia o e-mail em um contexto de aplicação para evitar bloqueio. """
+def send_email_async(app, mail_message):
+    """ Envia o e-mail usando a API do SendGrid em um contexto de aplicação. """
     with app.app_context():
         try:
-            mail.send(msg)
-            print(f"E-mail de boas-vindas enviado para: {msg.recipients[0]}")
+            # 1. Obtém a chave da variável de ambiente
+            api_key = os.environ.get('SENDGRID_API_KEY')
+            if not api_key:
+                app.logger.error("ERRO: SENDGRID_API_KEY não encontrada nas variáveis de ambiente.")
+                return
+
+            # 2. Configura o cliente e envia
+            sg = SendGridAPIClient(api_key)
+            response = sg.send(mail_message)
+            
+            # 3. Verifica o status da resposta da API do SendGrid
+            if response.status_code == 202:
+                print("E-mail de boas-vindas enviado com sucesso via SendGrid! Status 202.")
+            else:
+                # Loga a resposta para diagnóstico em caso de falha (ex: domínio não verificado)
+                app.logger.error(f"Falha no envio SendGrid. Status: {response.status_code}, Body: {response.body.decode('utf-8')}")
+                
         except Exception as e:
-            # É importante logar o erro, mas não parar a aplicação
-            app.logger.error(f"ERRO ao enviar e-mail de boas-vindas: {e}")
+            # Loga qualquer erro de conexão HTTP/API
+            app.logger.error(f"ERRO CRÍTICO no SendGrid: {e}")
+
 
 def send_welcome_email(user_email, user_name):
-    """ Configura e inicia o envio do e-mail de boas-vindas com BCC. """
+    """ Configura e inicia o envio do e-mail de boas-vindas usando SendGrid. """
     
-    # Endereço de e-mail para cópia oculta (BCC)
-    bcc_recipient = "jpzurlo.jz@gmail.com"
-    
+    # Endereços (Lidos do Render)
+    # Usa a variável 'MAIL_DEFAULT_SENDER' ou a de fallback
+    sender_email = os.environ.get('MAIL_DEFAULT_SENDER', 'Plant Doctor <noreply@plantdoctor.com>')
+    bcc_recipient = "jpzurlo.jz@gmail.com" # Seu e-mail
+
     subject = "🌱 Bem-vindo(a) ao Plant Doctor! Seu Cadastro Foi Concluído!"
-    body = (
-        f"Olá, {user_name},\n\n"
-        "Parabéns! Seu cadastro no Plant Doctor foi concluído com sucesso.\n"
-        "Estamos muito felizes em tê-lo(a) em nossa comunidade de agricultura inteligente.\n\n"
+    html_content = (
+        f"Olá, <b>{user_name}</b>,<br><br>"
+        "Parabéns! Seu cadastro no Plant Doctor foi concluído com sucesso. "
+        "Estamos muito felizes em tê-lo(a) em nossa comunidade de agricultura inteligente.<br><br>"
         "Use o aplicativo para registrar seus plantios, acompanhar o ciclo das culturas "
-        "e compartilhar conhecimento.\n\n"
-        "Seja muito bem-vindo!\n"
+        "e compartilhar conhecimento.<br><br>"
+        "Seja muito bem-vindo!<br>"
         "Equipe Plant Doctor"
     )
 
-    msg = Message(
-        subject,
-        recipients=[user_email],
-        body=body,
-        bcc=[bcc_recipient] # ✅ A CÓPIA OCULTA (BCC) É ADICIONADA AQUI
+    # Criação do objeto de mensagem do SendGrid
+    mail_message = SGMail(
+        from_email=sender_email,
+        to_emails=[To(user_email, user_name)],
+        subject=subject,
+        html_content=html_content
     )
     
-    # Executa o envio em uma nova Thread para não atrasar a resposta HTTP do registro
-    threading.Thread(target=send_email_async, args=(app, msg)).start()
+    # Adiciona o BCC (Cópia Oculta)
+    mail_message.add_bcc(Bcc(bcc_recipient))
+
+    # Executa o envio em uma nova Thread
+    threading.Thread(target=send_email_async, args=(app, mail_message)).start()
 
 
 # ----------------------------------------------------
@@ -134,7 +153,6 @@ def register():
     db.session.commit()
     
     # 🌟 AÇÃO PRINCIPAL: CHAMA O ENVIO DE E-MAIL 🌟
-    # É chamado após o registro ser confirmado no DB.
     send_welcome_email(email, name)
     
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
