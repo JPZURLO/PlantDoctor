@@ -1,9 +1,9 @@
 import os
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Email, To, Personalization
 import threading
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email, To, Personalization
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 from sqlalchemy import func
@@ -80,11 +80,10 @@ def send_email_async(app, mail_message):
             app.logger.error(f"ERRO CRÍTICO no SendGrid: {e}")
 
 
-from sendgrid.helpers.mail import Mail as SGMail, To, Bcc, Personalization
+
 
 def send_welcome_email(email, name):
     try:
-        # Conteúdo do e-mail
         conteudo_email = f"""
         <html>
             <body>
@@ -104,16 +103,13 @@ def send_welcome_email(email, name):
             html_content=conteudo_email
         )
 
-        # Personalização: destinatário principal
+        # Adiciona personalização
         personalization = Personalization()
         personalization.add_to(To(email))
-
-        # (Opcional) BCC se quiser enviar cópia para você mesmo
         personalization.add_bcc(Email('plantdoctor.admin@outlook.com'))
-
         message.add_personalization(personalization)
 
-        # Envia o e-mail usando chave do ambiente
+        # Envia via SendGrid
         sg = SendGridAPIClient(api_key=os.environ.get('SENDGRID_API_KEY'))
         response = sg.send(message)
 
