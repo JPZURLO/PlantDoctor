@@ -12,7 +12,8 @@ from functools import wraps
 # REMOVIDO: from flask_mail import Mail, Message
 
 # ✅ NOVO: Importa a biblioteca SendGrid
-from sendgrid import SendGridAPIClient 
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail as SGMail, To, Bcc
 
 
 # --- FIM: BLOCO CORRIGIDO ---
@@ -82,34 +83,41 @@ def send_email_async(app, mail_message):
 from sendgrid.helpers.mail import Mail as SGMail, To, Bcc, Personalization
 
 def send_welcome_email(user_email, user_name):
-    sender_email = os.environ.get('MAIL_DEFAULT_SENDER', 'Plant Doctor <noreply@plantdoctor.com>')
-    bcc_recipient = "jpzurlo.jz@gmail.com"
+    sender_email = "plantdoctorapp@gmail.com"
+    bcc_recipient = "plantdoctorapp@gmail.com"
+    subject = "Bem-vindo(a) ao Plant Doctor 🌱"
 
-    subject = "🌱 Bem-vindo(a) ao Plant Doctor! Seu Cadastro Foi Concluído!"
-    html_content = (
-        f"Olá, <b>{user_name}</b>,<br><br>"
-        "Parabéns! Seu cadastro no Plant Doctor foi concluído com sucesso. "
-        "Estamos muito felizes em tê-lo(a) em nossa comunidade de agricultura inteligente.<br><br>"
-        "Use o aplicativo para registrar seus plantios, acompanhar o ciclo das culturas "
-        "e compartilhar conhecimento.<br><br>"
-        "Seja muito bem-vindo!<br>"
-        "Equipe Plant Doctor"
-    )
+    html_content = f"""
+    <html>
+        <body style="font-family: Arial, sans-serif; background-color: #f6f6f6; padding: 20px;">
+            <div style="max-width: 600px; margin: auto; background: white; border-radius: 8px; padding: 20px;">
+                <h2 style="color: #2e7d32;">Olá, {user_name}!</h2>
+                <p>Estamos muito felizes em ter você conosco.</p>
+                <p>Agora você pode acessar nossa plataforma e aproveitar todas as funcionalidades disponíveis.</p>
+                <p>🌿 <b>Identifique pragas e doenças</b><br>
+                   📊 <b>Acompanhe relatórios e diagnósticos</b><br>
+                   📸 <b>Envie fotos e receba respostas rápidas</b></p>
+                <p style="margin-top: 30px;">Atenciosamente,<br><b>Equipe Plant Doctor</b></p>
+            </div>
+        </body>
+    </html>
+    """
 
-    # ✅ Cria o e-mail
-    message = SGMail(
-        from_email=sender_email,
-        subject=subject,
-        html_content=html_content
-    )
+    try:
+        message = SGMail(
+            from_email=sender_email,
+            to_emails=[To(user_email)],
+            bcc=[Bcc(bcc_recipient)],
+            subject=subject,
+            html_content=html_content
+        )
 
-    # ✅ Define a personalização com TO e BCC corretamente
-    personalization = message.personalizations[0]
-    personalization.tos = [To(user_email, user_name)]
-    personalization.bccs = [Bcc(bcc_recipient)]
+        sg = SendGridAPIClient(api_key=os.environ.get("SENDGRID_API_KEY"))
+        response = sg.send(message)
 
-    threading.Thread(target=send_email_async, args=(app, message)).start()
-
+        print(f"E-mail enviado com sucesso para {user_email} (status {response.status_code})")
+    except Exception as e:
+        print(f"Erro ao enviar e-mail de boas-vindas: {e}")
 
 
 # ----------------------------------------------------
