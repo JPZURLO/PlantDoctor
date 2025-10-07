@@ -1,10 +1,14 @@
 import os
+import threading # Novo: Para envio assíncrono
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 from sqlalchemy import func
 from functools import wraps
+
+# NOVO: Importa a classe Mail e Message
+from flask_mail import Mail, Message
 
 # Importa todos os modelos necessários
 from models import (
@@ -23,9 +27,66 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
+# 🌟 CONFIGURAÇÕES DO FLASK-MAIL 🌟
+# É crucial usar variáveis de ambiente no Render para estas credenciais (MAIL_USERNAME/MAIL_PASSWORD)
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
+app.config['MAIL_USE_SSL'] = os.environ.get('MAIL_USE_SSL', 'False').lower() in ('true', '1', 't') # Geralmente True se port=465
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME', 'SEU_EMAIL_DE_ENVIO@gmail.com') # Substitua pelo seu email
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD', 'SUA_SENHA_DE_APP') # Use Senha de App se for Gmail
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER', 'Plant Doctor <SEU_EMAIL_DE_ENVIO@gmail.com>')
+
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
+mail = Mail(app) # ✅ INICIALIZAÇÃO DO FLASK-MAIL
+
+# ----------------------------------------------------
+# 📧 FUNÇÕES AUXILIARES DE E-MAIL 📧
+# ----------------------------------------------------
+
+def send_email_async(app, msg):
+    """ Envia o e-mail em um contexto de aplicação para evitar bloqueio. """
+    with app.app_context():
+        try:
+            mail.send(msg)
+            print(f"E-mail de boas-vindas enviado para: {msg.recipients[0]}")
+        except Exception as e:
+            # É importante logar o erro, mas não parar a aplicação
+            app.logger.error(f"ERRO ao enviar e-mail de boas-vindas: {e}")
+
+def send_welcome_email(user_email, user_name):
+    """ Configura e inicia o envio do e-mail de boas-vindas com BCC. """
+    
+    # Endereço de e-mail para cópia oculta (BCC)
+    bcc_recipient = "jpzurlo.jz@gmail.com"
+    
+    subject = "🌱 Bem-vindo(a) ao Plant Doctor! Seu Cadastro Foi Concluído!"
+    body = (
+        f"Olá, {user_name},\n\n"
+        "Parabéns! Seu cadastro no Plant Doctor foi concluído com sucesso.\n"
+        "Estamos muito felizes em tê-lo(a) em nossa comunidade de agricultura inteligente.\n\n"
+        "Use o aplicativo para registrar seus plantios, acompanhar o ciclo das culturas "
+        "e compartilhar conhecimento.\n\n"
+        "Seja muito bem-vindo!\n"
+        "Equipe Plant Doctor"
+    )
+
+    msg = Message(
+        subject,
+        recipients=[user_email],
+        body=body,
+        bcc=[bcc_recipient] # ✅ A CÓPIA OCULTA (BCC) É ADICIONADA AQUI
+    )
+    
+    # Executa o envio em uma nova Thread para não atrasar a resposta HTTP do registro
+    threading.Thread(target=send_email_async, args=(app, msg)).start()
+
+
+# ----------------------------------------------------
+# DECORATOR E ROTAS DE AUTENTICAÇÃO
+# ----------------------------------------------------
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
 def admin_required():
@@ -49,14 +110,23 @@ def register():
     name = data.get('name')
     email = data.get('email')
     password = data.get('password')
+    
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
+    
     if User.query.filter_by(email=email).first():
         return jsonify({"message": "Este e-mail já está registado."}), 409
+    
     hashed_password = generate_password_hash(password)
+    
     new_user = User(name=name, email=email, password_hash=hashed_password)
     db.session.add(new_user)
     db.session.commit()
+    
+    # 🌟 AÇÃO PRINCIPAL: CHAMA O ENVIO DE E-MAIL 🌟
+    # É chamado após o registro ser confirmado no DB.
+    send_welcome_email(email, name)
+    
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -81,7 +151,10 @@ def login():
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
 
-# --- ROTAS DE ADMINISTRAÇÃO ---
+# ----------------------------------------------------
+# ROTAS DE ADMINISTRAÇÃO
+# ----------------------------------------------------
+
 @app.route("/api/admin/users", methods=["GET"])
 @admin_required()
 def get_all_users():
@@ -144,6 +217,11 @@ def get_user_history(user_id):
     history = UserEditHistory.query.filter_by(edited_user_id=user_id).order_by(UserEditHistory.changed_at.desc()).all()
     return jsonify([entry.to_dict() for entry in history]), 200
 
+
+# ----------------------------------------------------
+# ROTAS DE CULTURAS, PLANTIOS, DÚVIDAS E SUGESTÕES
+# (Omitidas para brevidade, mas estão no seu código original)
+# ----------------------------------------------------
 
 # --- ROTAS DE CULTURAS (GERAL) ---
 @app.route("/api/cultures", methods=["GET"])
