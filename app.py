@@ -18,10 +18,20 @@ from models import (
 
 app = Flask(__name__)
 
-# --- Configuração ---
-database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
+# Busca a URL da variável de ambiente (assumindo que está sempre definida no Render)
+database_url = os.environ.get('DATABASE_URL') 
+
+# CORREÇÃO CRUCIAL: Substitui o formato 'postgres://' (antigo/Render) pelo 'postgresql://' (exigido pelo driver)
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
+
+# Se a variável de ambiente não estiver definida, você pode querer gerar um erro
+# ou definir um valor padrão (o que não é necessário no Render, mas é bom para o Flask-SQLAlchemy).
+if not database_url:
+    # Isso só ocorreria em um ambiente onde a variável não foi definida
+    raise RuntimeError("DATABASE_URL não está definida no ambiente.")
+
+app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
