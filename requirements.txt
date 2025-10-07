@@ -4,4 +4,4 @@ Flask-JWT-Extended
 gunicorn
 werkzeug
 psycopg2-binary
-sendgrid
+Flask-Mail
