@@ -6,6 +6,9 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from functools import wraps
 
+# NOVO: Importações do Flask-Mail
+from flask_mail import Mail, Message
+
 # Importa todos os modelos necessários
 from models import (
     db, User, Culture, PlantedCulture, HistoryEvent,
@@ -23,9 +26,54 @@ app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
 
+# --- NOVO: Configuração do Flask-Mail (lendo do Render ENVs) ---
+app.config['MAIL_SERVER'] = os.environ.get('MAIL_SERVER', 'smtp.gmail.com')
+app.config['MAIL_PORT'] = int(os.environ.get('MAIL_PORT', 587))
+app.config['MAIL_USE_TLS'] = os.environ.get('MAIL_USE_TLS', 'True').lower() in ('true', '1', 't')
+app.config['MAIL_USERNAME'] = os.environ.get('MAIL_USERNAME')
+app.config['MAIL_PASSWORD'] = os.environ.get('MAIL_PASSWORD')
+app.config['MAIL_DEFAULT_SENDER'] = os.environ.get('MAIL_DEFAULT_SENDER')
+# --- FIM DA CONFIGURAÇÃO DO FLASK-MAIL ---
+
+
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
+mail = Mail(app) # NOVO: Inicialização do Mail
+
+
+# --- FUNÇÃO AUXILIAR DE E-MAIL ---
+def send_welcome_email(recipient_email, name):
+    # Verifica se as configurações básicas de e-mail estão presentes
+    if not app.config.get('MAIL_USERNAME'):
+        app.logger.error("Configuração de e-mail ausente. E-mail de boas-vindas não enviado.")
+        return False
+        
+    try:
+        msg = Message(
+            subject="Bem-vindo(a) ao Plant Doctor!",
+            recipients=[recipient_email],
+            html=f"""
+                <html>
+                    <body>
+                        <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
+                        <p>Seu registro foi concluído com sucesso. Estamos felizes em tê-lo(a) conosco.</p>
+                        <p>Acesse o aplicativo para gerir suas culturas.</p>
+                    </body>
+                </html>
+            """
+        )
+        
+        # O Flask-Mail deve ser enviado dentro do contexto do aplicativo
+        with app.app_context():
+            mail.send(msg)
+            print(f">>> E-mail de boas-vindas enviado para {recipient_email}")
+            return True
+    except Exception as e:
+        app.logger.error(f"ERRO CRÍTICO ao enviar e-mail (Flask-Mail): {e}")
+        return False
+# --- FIM DA FUNÇÃO AUXILIAR DE E-MAIL ---
+
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
 def admin_required():
@@ -49,14 +97,22 @@ def register():
     name = data.get('name')
     email = data.get('email')
     password = data.get('password')
+    
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
+        
     if User.query.filter_by(email=email).first():
         return jsonify({"message": "Este e-mail já está registado."}), 409
+        
     hashed_password = generate_password_hash(password)
     new_user = User(name=name, email=email, password_hash=hashed_password)
+    
     db.session.add(new_user)
     db.session.commit()
+    
+    # CHAMADA DA FUNÇÃO DE E-MAIL AQUI
+    send_welcome_email(email, name)
+    
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -64,6 +120,7 @@ def login():
     data = request.get_json()
     email = data.get('email')
     password = data.get('password')
+    
     if not email or not password:
         return jsonify({"message": "Email ou senha em falta."}), 400
     
@@ -88,7 +145,7 @@ def get_all_users():
     users = User.query.order_by(User.name).all()
     return jsonify([user.to_dict() for user in users]), 200
 
-# ✅ FUNÇÃO AUXILIAR PARA REGISTRAR HISTÓRICO (ADICIONADA DE VOLTA)
+# FUNÇÃO AUXILIAR PARA REGISTRAR HISTÓRICO
 def log_user_change(edited_user, admin_user_id, field, old_value, new_value):
     if str(old_value) != str(new_value):
         history_entry = UserEditHistory(
@@ -318,7 +375,7 @@ def get_culture_ranking():
         app.logger.error(f"Erro ao calcular ranking: {e}")
         return jsonify({"message": "Erro interno ao gerar o ranking."}), 500
 
-# ✅ ROTAS DE SUGESTÕES (ADICIONADAS DE VOLTA)
+# ROTAS DE SUGESTÕES
 @app.route("/api/suggestions", methods=["POST"])
 @jwt_required()
 def post_suggestion():
