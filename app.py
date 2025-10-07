@@ -1,22 +1,10 @@
 import os
-import threading
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail, Email, To, Personalization
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
 from sqlalchemy import func
 from functools import wraps
-
-# --- INÍCIO: BLOCO CORRIGIDO PARA USAR SOMENTE SENDGRID ---
-
-# REMOVIDO: from flask_mail import Mail, Message
-
-# ✅ NOVO: Importa a biblioteca SendGrid
-
-
-# --- FIM: BLOCO CORRIGIDO ---
 
 # Importa todos os modelos necessários
 from models import (
@@ -27,101 +15,17 @@ from models import (
 app = Flask(__name__)
 
 # --- Configuração ---
-database_url = os.environ.get('DATABASE_URL') 
-
-# CORREÇÃO CRUCIAL: Substitui o formato 'postgres://' (antigo/Render) pelo 'postgresql://' (exigido pelo driver)
+database_url = os.environ.get('DATABASE_URL', 'sqlite:///database.db')
 if database_url and database_url.startswith("postgres://"):
     database_url = database_url.replace("postgres://", "postgresql://", 1)
 
-# Se a variável de ambiente não estiver definida, você pode querer gerar um erro
-if not database_url:
-    raise RuntimeError("DATABASE_URL não está definida no ambiente.")
-
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
-
-# 🔴 REMOVIDO: app.config['SQLALCHEMY_DATABASE_URI'] = database_url (DUPLICADO)
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
-
-# ❌ REMOVIDAS TODAS AS CONFIGURAÇÕES ANTIGAS DO FLASK-MAIL A PARTIR DAQUI ❌
 
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-# ❌ REMOVIDO: mail = Mail(app) # Remove a inicialização do Flask-Mail
-
-# ----------------------------------------------------
-# 📧 FUNÇÕES AUXILIARES DE E-MAIL (AGORA COM SENDGRID) 📧
-# ----------------------------------------------------
-
-def send_email_async(app, mail_message):
-    """ Envia o e-mail usando a API do SendGrid em um contexto de aplicação. """
-    with app.app_context():
-        try:
-            # 1. Obtém a chave da variável de ambiente
-            api_key = os.environ.get('SENDGRID_API_KEY')
-            if not api_key:
-                app.logger.error("ERRO: SENDGRID_API_KEY não encontrada nas variáveis de ambiente.")
-                return
-
-            # 2. Configura o cliente e envia
-            sg = SendGridAPIClient(api_key)
-            response = sg.send(mail_message)
-            
-            # 3. Verifica o status da resposta da API do SendGrid
-            if response.status_code == 202:
-                print("E-mail de boas-vindas enviado com sucesso via SendGrid! Status 202.")
-            else:
-                # Loga a resposta para diagnóstico em caso de falha (ex: domínio não verificado)
-                app.logger.error(f"Falha no envio SendGrid. Status: {response.status_code}, Body: {response.body.decode('utf-8')}")
-                
-        except Exception as e:
-            # Loga qualquer erro de conexão HTTP/API
-            app.logger.error(f"ERRO CRÍTICO no SendGrid: {e}")
-
-
-
-
-def send_welcome_email(email, name):
-    try:
-        conteudo_email = f"""
-        <html>
-            <body>
-                <h2>Olá, {name}!</h2>
-                <p>Seja bem-vindo ao <strong>Plant Doctor</strong> 🌱</p>
-                <p>Agora você pode aproveitar todas as funcionalidades do nosso app.</p>
-                <br>
-                <p>Atenciosamente,<br>Equipe Plant Doctor</p>
-            </body>
-        </html>
-        """
-
-        # Cria a mensagem base
-        message = Mail(
-            from_email=Email('suporte@plantdoctor.com', name='Plant Doctor'),
-            subject='Bem-vindo ao Plant Doctor!',
-            html_content=conteudo_email
-        )
-
-        # Adiciona personalização
-        personalization = Personalization()
-        personalization.add_to(To(email))
-        personalization.add_bcc(Email('plantdoctor.admin@outlook.com'))
-        message.add_personalization(personalization)
-
-        # Envia via SendGrid
-        sg = SendGridAPIClient(api_key=os.environ.get('SENDGRID_API_KEY'))
-        response = sg.send(message)
-
-        print(f"E-mail de boas-vindas enviado com sucesso para {email}. Status: {response.status_code}")
-
-    except Exception as e:
-        print(f"Erro ao enviar e-mail de boas-vindas: {e}")
-
-
-# ----------------------------------------------------
-# DECORATOR E ROTAS DE AUTENTICAÇÃO
-# ----------------------------------------------------
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
 def admin_required():
@@ -145,22 +49,14 @@ def register():
     name = data.get('name')
     email = data.get('email')
     password = data.get('password')
-    
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
-    
     if User.query.filter_by(email=email).first():
         return jsonify({"message": "Este e-mail já está registado."}), 409
-    
     hashed_password = generate_password_hash(password)
-    
     new_user = User(name=name, email=email, password_hash=hashed_password)
     db.session.add(new_user)
     db.session.commit()
-    
-    # 🌟 AÇÃO PRINCIPAL: CHAMA O ENVIO DE E-MAIL 🌟
-    send_welcome_email(email, name)
-    
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
 
 @app.route("/api/auth/login", methods=["POST"])
@@ -185,10 +81,7 @@ def login():
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
 
-# ----------------------------------------------------
-# ROTAS DE ADMINISTRAÇÃO
-# ----------------------------------------------------
-
+# --- ROTAS DE ADMINISTRAÇÃO ---
 @app.route("/api/admin/users", methods=["GET"])
 @admin_required()
 def get_all_users():
@@ -251,11 +144,6 @@ def get_user_history(user_id):
     history = UserEditHistory.query.filter_by(edited_user_id=user_id).order_by(UserEditHistory.changed_at.desc()).all()
     return jsonify([entry.to_dict() for entry in history]), 200
 
-
-# ----------------------------------------------------
-# ROTAS DE CULTURAS, PLANTIOS, DÚVIDAS E SUGESTÕES
-# (Omitidas para brevidade, mas estão no seu código original)
-# ----------------------------------------------------
 
 # --- ROTAS DE CULTURAS (GERAL) ---
 @app.route("/api/cultures", methods=["GET"])
