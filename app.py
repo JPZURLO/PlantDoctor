@@ -172,10 +172,10 @@ def login():
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
     
-@app.route("/api/auth/request-password-reset", methods=["POST"])
+@app.route("/api/auth/request-password-reset", methods=["GET"]) # ALTERADO
 def request_password_reset():
-    data = request.get_json()
-    email = data.get('email')
+    # LER DO QUERY PARAMS (GET)
+    email = request.args.get('email')
     
     user = User.query.filter_by(email=email).first()
     if not user:
