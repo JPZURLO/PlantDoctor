@@ -1,5 +1,5 @@
 import os
-from flask import Flask, request, jsonify
+from flask import Flask, request, jsonify, url_for
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
@@ -9,11 +9,14 @@ import threading
 
 # NOVO: Usamos requests para a API HTTP do Brevo
 import requests
+# REMOVIDO: Flask-Mail não é mais usado
 
 # Importa todos os modelos necessários
 from models import (
     db, User, Culture, PlantedCulture, HistoryEvent,
-    EventType, Doubt, Suggestion, UserType, UserEditHistory
+    EventType, Doubt, Suggestion, UserType, UserEditHistory,
+    # Presumindo que este modelo existe para rastrear tokens de reset
+    PasswordResetToken 
 )
 
 app = Flask(__name__)
@@ -26,8 +29,11 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
+# IMPORTANTE: Definir a expiração do token de reset (1 hora)
+app.config['RESET_TOKEN_EXPIRES'] = timedelta(hours=1)
 
-# --- CONFIGURAÇÃO BREVO/E-MAIL ---
+
+# --- CONFIGURAÇÃO BREVO/E-MAIL (API HTTP) ---
 BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
 SENDER_EMAIL = os.environ.get('MAIL_SENDER_EMAIL')
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
@@ -37,16 +43,17 @@ BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-# REMOVIDO: mail = Mail(app) # Não usamos mais Flask-Mail
+# REMOVIDO: mail = Mail(app)
 
 
 # --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
-def send_brevo_email_async(recipient_email, name):
+def send_brevo_email_async(recipient_email, subject, html_content):
     """Função que envia o e-mail via API do Brevo (HTTPS), rodando em uma thread."""
     if not BREVO_API_KEY or not SENDER_EMAIL:
         app.logger.error("Configuração Brevo ausente. E-mail não enviado.")
         return
 
+    # O Brevo usa a chave de API no header e JSON no corpo
     headers = {
         "accept": "application/json",
         "api-key": BREVO_API_KEY,
@@ -55,16 +62,9 @@ def send_brevo_email_async(recipient_email, name):
     
     data = {
         "sender": {"name": "Plant Doctor", "email": SENDER_EMAIL},
-        "to": [{"email": recipient_email, "name": name}],
-        "subject": "Bem-vindo(a) ao Plant Doctor!",
-        "htmlContent": f"""
-            <html>
-                <body>
-                    <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
-                    <p>Seu registro foi concluído com sucesso. O envio foi feito via API Brevo.</p>
-                </body>
-            </html>
-        """
+        "to": [{"email": recipient_email}],
+        "subject": subject,
+        "htmlContent": html_content
     }
 
     try:
@@ -79,10 +79,34 @@ def send_brevo_email_async(recipient_email, name):
 
 
 def send_welcome_email(recipient_email, name):
-    """Inicia o envio do e-mail de boas-vindas em uma thread separada."""
-    thr = threading.Thread(target=send_brevo_email_async, args=[recipient_email, name])
-    thr.start()
-    return True
+    """Lógica do e-mail de Boas-Vindas."""
+    subject = "Bem-vindo(a) ao Plant Doctor!"
+    html_content = f"""
+        <html><body>
+            <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
+            <p>Seu registro foi concluído com sucesso. Agora você pode gerenciar suas culturas.</p>
+        </body></html>
+    """
+    threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
+
+
+def send_reset_email(recipient_email, token):
+    """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
+    
+    # IMPORTANTE: Use o esquema de Deep Link do seu aplicativo Kotlin aqui
+    APP_RESET_URL = f"plantdoctor://reset-password?token={token}" 
+    
+    subject = "Recuperação de Senha - Plant Doctor"
+    html_content = f"""
+        <html><body>
+            <h1>Recuperação de Senha</h1>
+            <p>Você solicitou uma redefinição de senha. Clique no link abaixo para redefinir:</p>
+            <p><a href="{APP_RESET_URL}">Redefinir Senha</a></p>
+            <p>Se você não solicitou esta redefinição, ignore este e-mail.</p>
+            <p>Este link expira em 1 hora.</p>
+        </body></html>
+    """
+    threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
 # --- FIM DAS FUNÇÕES DE E-MAIL ---
 
 
@@ -121,7 +145,6 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     
-    # CHAMADA DA FUNÇÃO DE E-MAIL (agora Brevo Assíncrono)
     send_welcome_email(email, name)
     
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
@@ -148,6 +171,61 @@ def login():
         }), 200
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
+    
+@app.route("/api/auth/request-password-reset", methods=["POST"])
+def request_password_reset():
+    data = request.get_json()
+    email = data.get('email')
+    
+    user = User.query.filter_by(email=email).first()
+    if not user:
+        # Retorna sucesso por segurança (evita enumerar usuários)
+        return jsonify({"message": "Se o utilizador estiver registado, o link será enviado."}), 200
+
+    # 1. Cria um token e define a expiração
+    token = create_access_token(
+        identity=str(user.id), 
+        expires_delta=app.config['RESET_TOKEN_EXPIRES']
+    )
+    expiration = datetime.utcnow() + app.config['RESET_TOKEN_EXPIRES']
+    
+    # 2. Salva o token no banco de dados para validá-lo
+    # IMPORTANTE: Assumindo que PasswordResetToken é importado de models
+    new_token_entry = PasswordResetToken(user_id=user.id, token=token, expires_at=expiration)
+    db.session.add(new_token_entry)
+    db.session.commit()
+    
+    # 3. Envia o e-mail usando a função Brevo
+    send_reset_email(user.email, token)
+    
+    return jsonify({"message": "Se o utilizador estiver registado, o link será enviado."}), 200
+
+@app.route("/api/auth/reset-password", methods=["POST"])
+def reset_password():
+    data = request.get_json()
+    token = data.get('token')
+    new_password = data.get('new_password')
+    
+    if not token or not new_password:
+        return jsonify({"message": "Token e nova senha são obrigatórios."}), 400
+
+    # 1. Valida o token e a expiração
+    token_entry = PasswordResetToken.query.filter_by(token=token).first()
+    if not token_entry or token_entry.expires_at < datetime.utcnow():
+        return jsonify({"message": "Token inválido ou expirado."}), 401
+
+    # 2. Busca o usuário
+    user = User.query.get(token_entry.user_id)
+    if not user:
+        return jsonify({"message": "Usuário não encontrado."}), 404
+        
+    # 3. Atualiza a senha e remove o token
+    user.password_hash = generate_password_hash(new_password)
+    db.session.delete(token_entry) # Remove o token para que não possa ser reutilizado
+    db.session.commit()
+
+    return jsonify({"message": "Senha redefinida com sucesso!"}), 200
+
 
 # --- ROTAS DE ADMINISTRAÇÃO ---
 @app.route("/api/admin/users", methods=["GET"])
