@@ -1,4 +1,6 @@
 import os
+from sendgrid import SendGridAPIClient
+from sendgrid.helpers.mail import Mail, Email, To, Personalization
 import threading
 from flask import Flask, request, jsonify
 from werkzeug.security import generate_password_hash, check_password_hash
@@ -12,8 +14,6 @@ from functools import wraps
 # REMOVIDO: from flask_mail import Mail, Message
 
 # ✅ NOVO: Importa a biblioteca SendGrid
-from sendgrid import SendGridAPIClient
-from sendgrid.helpers.mail import Mail as SGMail, To, Bcc
 
 
 # --- FIM: BLOCO CORRIGIDO ---
@@ -82,40 +82,43 @@ def send_email_async(app, mail_message):
 
 from sendgrid.helpers.mail import Mail as SGMail, To, Bcc, Personalization
 
-def send_welcome_email(user_email, user_name):
-    sender_email = "plantdoctorapp@gmail.com"
-    bcc_recipient = "plantdoctorapp@gmail.com"
-    subject = "Bem-vindo(a) ao Plant Doctor 🌱"
-
-    html_content = f"""
-    <html>
-        <body style="font-family: Arial, sans-serif; background-color: #f6f6f6; padding: 20px;">
-            <div style="max-width: 600px; margin: auto; background: white; border-radius: 8px; padding: 20px;">
-                <h2 style="color: #2e7d32;">Olá, {user_name}!</h2>
-                <p>Estamos muito felizes em ter você conosco.</p>
-                <p>Agora você pode acessar nossa plataforma e aproveitar todas as funcionalidades disponíveis.</p>
-                <p>🌿 <b>Identifique pragas e doenças</b><br>
-                   📊 <b>Acompanhe relatórios e diagnósticos</b><br>
-                   📸 <b>Envie fotos e receba respostas rápidas</b></p>
-                <p style="margin-top: 30px;">Atenciosamente,<br><b>Equipe Plant Doctor</b></p>
-            </div>
-        </body>
-    </html>
-    """
-
+def send_welcome_email(email, name):
     try:
-        message = SGMail(
-            from_email=sender_email,
-            to_emails=[To(user_email)],
-            bcc=[Bcc(bcc_recipient)],
-            subject=subject,
-            html_content=html_content
+        # Conteúdo do e-mail
+        conteudo_email = f"""
+        <html>
+            <body>
+                <h2>Olá, {name}!</h2>
+                <p>Seja bem-vindo ao <strong>Plant Doctor</strong> 🌱</p>
+                <p>Agora você pode aproveitar todas as funcionalidades do nosso app.</p>
+                <br>
+                <p>Atenciosamente,<br>Equipe Plant Doctor</p>
+            </body>
+        </html>
+        """
+
+        # Cria a mensagem base
+        message = Mail(
+            from_email=Email('suporte@plantdoctor.com', name='Plant Doctor'),
+            subject='Bem-vindo ao Plant Doctor!',
+            html_content=conteudo_email
         )
 
-        sg = SendGridAPIClient(api_key=os.environ.get("SENDGRID_API_KEY"))
+        # Personalização: destinatário principal
+        personalization = Personalization()
+        personalization.add_to(To(email))
+
+        # (Opcional) BCC se quiser enviar cópia para você mesmo
+        personalization.add_bcc(Email('plantdoctor.admin@outlook.com'))
+
+        message.add_personalization(personalization)
+
+        # Envia o e-mail usando chave do ambiente
+        sg = SendGridAPIClient(api_key=os.environ.get('SENDGRID_API_KEY'))
         response = sg.send(message)
 
-        print(f"E-mail enviado com sucesso para {user_email} (status {response.status_code})")
+        print(f"E-mail de boas-vindas enviado com sucesso para {email}. Status: {response.status_code}")
+
     except Exception as e:
         print(f"Erro ao enviar e-mail de boas-vindas: {e}")
 
