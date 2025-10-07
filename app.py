@@ -13,7 +13,7 @@ from functools import wraps
 
 # ✅ NOVO: Importa a biblioteca SendGrid
 from sendgrid import SendGridAPIClient 
-from sendgrid.helpers.mail import Mail as SGMail, To, Bcc 
+
 
 # --- FIM: BLOCO CORRIGIDO ---
 
@@ -79,13 +79,11 @@ def send_email_async(app, mail_message):
             app.logger.error(f"ERRO CRÍTICO no SendGrid: {e}")
 
 
+from sendgrid.helpers.mail import Mail as SGMail, To, Bcc, Personalization
+
 def send_welcome_email(user_email, user_name):
-    """ Configura e inicia o envio do e-mail de boas-vindas usando SendGrid. """
-    
-    # Endereços (Lidos do Render)
-    # Usa a variável 'MAIL_DEFAULT_SENDER' ou a de fallback
     sender_email = os.environ.get('MAIL_DEFAULT_SENDER', 'Plant Doctor <noreply@plantdoctor.com>')
-    bcc_recipient = "jpzurlo.jz@gmail.com" # Seu e-mail
+    bcc_recipient = "jpzurlo.jz@gmail.com"
 
     subject = "🌱 Bem-vindo(a) ao Plant Doctor! Seu Cadastro Foi Concluído!"
     html_content = (
@@ -98,19 +96,20 @@ def send_welcome_email(user_email, user_name):
         "Equipe Plant Doctor"
     )
 
-    # Criação do objeto de mensagem do SendGrid
-    mail_message = SGMail(
+    # ✅ Cria o e-mail
+    message = SGMail(
         from_email=sender_email,
-        to_emails=[To(user_email, user_name)],
         subject=subject,
         html_content=html_content
     )
-    
-    # Adiciona o BCC (Cópia Oculta)
-    mail_message.add_bcc(Bcc(bcc_recipient))
 
-    # Executa o envio em uma nova Thread
-    threading.Thread(target=send_email_async, args=(app, mail_message)).start()
+    # ✅ Define a personalização com TO e BCC corretamente
+    personalization = message.personalizations[0]
+    personalization.tos = [To(user_email, user_name)]
+    personalization.bccs = [Bcc(bcc_recipient)]
+
+    threading.Thread(target=send_email_async, args=(app, message)).start()
+
 
 
 # ----------------------------------------------------
