@@ -173,32 +173,26 @@ def login():
         return jsonify({"message": "Credenciais inválidas."}), 401
     
 @app.route("/api/auth/request-password-reset", methods=["GET"]) # ALTERADO
-def request_password_reset():
-    # LER DO QUERY PARAMS (GET)
-    email = request.args.get('email')
+def send_reset_email(recipient_email, token):
+    """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
     
-    user = User.query.filter_by(email=email).first()
-    if not user:
-        # Retorna sucesso por segurança (evita enumerar usuários)
-        return jsonify({"message": "Se o utilizador estiver registado, o link será enviado."}), 200
+    # IMPORTANTE: Use o esquema de Deep Link do seu aplicativo Kotlin aqui
+    # Altere "plantdoctor://" para o esquema de URL que seu app Android usa para Deep Links
+    APP_RESET_URL = f"plantdoctor://reset-password?token={token}" 
+    
+    subject = "Recuperação de Senha - Plant Doctor"
+    html_content = f"""
+        <html><body>
+            <h1>Recuperação de Senha</h1>
+            <p>Você solicitou uma redefinição de senha. Clique no link abaixo para redefinir:</p>
+            <p><a href="{APP_RESET_URL}">Redefinir Senha</a></p>
+            <p>Se você não solicitou esta redefinição, ignore este e-mail.</p>
+            <p>Este link expira em 1 hora.</p>
+        </body></html>
+    """
+    threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
 
-    # 1. Cria um token e define a expiração
-    token = create_access_token(
-        identity=str(user.id), 
-        expires_delta=app.config['RESET_TOKEN_EXPIRES']
-    )
-    expiration = datetime.utcnow() + app.config['RESET_TOKEN_EXPIRES']
-    
-    # 2. Salva o token no banco de dados para validá-lo
-    # IMPORTANTE: Assumindo que PasswordResetToken é importado de models
-    new_token_entry = PasswordResetToken(user_id=user.id, token=token, expires_at=expiration)
-    db.session.add(new_token_entry)
-    db.session.commit()
-    
-    # 3. Envia o e-mail usando a função Brevo
-    send_reset_email(user.email, token)
-    
-    return jsonify({"message": "Se o utilizador estiver registado, o link será enviado."}), 200
+# --- FIM DAS FUNÇÕES DE E-MAIL ---
 
 @app.route("/api/auth/reset-password", methods=["POST"])
 def reset_password():
