@@ -107,7 +107,7 @@ def send_reset_email(recipient_email, token):
     """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
     
     # ESTA É A URL QUE O SEU APP ANDROID VAI INTERCEPTAR
-    APP_RESET_URL = f"plantdoctor://reset-password?token={token}&email={recipient_email}" 
+    APP_RESET_URL = f"https://plantdoctor-backend.onrender.com/api/auth/redirect-reset?token={token}&email={recipient_email}" 
     
     subject = "Recuperação de Senha - Plant Doctor"
     html_content = f"""
