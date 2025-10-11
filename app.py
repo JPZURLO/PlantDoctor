@@ -219,12 +219,27 @@ def reset_password():
     new_password = data.get('new_password')
     
     if not token or not new_password:
+        # Retorna erro se o Android não enviou os dados JSON
         return jsonify({"message": "Token e nova senha são obrigatórios."}), 400
 
-    # 1. Valida o token e a expiração
+    # ✅ CORREÇÃO 1: Limpar tokens expirados antes de procurar (opcional, mas bom)
+    # Isso ajuda a manter o banco de dados limpo
+    PasswordResetToken.query.filter(
+        PasswordResetToken.expires_at < datetime.utcnow()
+    ).delete(synchronize_session='fetch')
+    
+    # 1. Valida o token e a expiração (busca o token NOVO)
     token_entry = PasswordResetToken.query.filter_by(token=token).first()
-    if not token_entry or token_entry.expires_at < datetime.utcnow():
-        return jsonify({"message": "Token inválido ou expirado."}), 401
+
+    if not token_entry:
+        # Se o token não foi encontrado (porque expirou e foi deletado, ou nunca existiu)
+        return jsonify({"message": "Link inválido. Tente novamente."}), 401
+    
+    # Se o token for encontrado, mas o timestamp de expiração já passou:
+    if token_entry.expires_at < datetime.utcnow():
+        db.session.delete(token_entry)
+        db.session.commit()
+        return jsonify({"message": "Link expirado. Tente novamente."}), 401
 
     # 2. Busca o usuário
     user = User.query.get(token_entry.user_id)
@@ -237,7 +252,6 @@ def reset_password():
     db.session.commit()
 
     return jsonify({"message": "Senha redefinida com sucesso!"}), 200
-
 
 # --- ROTAS DE ADMINISTRAÇÃO ---
 @app.route("/api/admin/users", methods=["GET"])
