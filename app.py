@@ -9,7 +9,6 @@ import threading
 
 # NOVO: Usamos requests para a API HTTP do Brevo
 import requests
-# REMOVIDO: Flask-Mail não é mais usado
 
 # Importa todos os modelos necessários
 from models import (
@@ -43,10 +42,8 @@ BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 # --- Inicialização das Extensões ---
 db.init_app(app)
 jwt = JWTManager(app)
-# REMOVIDO: mail = Mail(app)
 
 
-# --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
 # --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
 def send_brevo_email_async(recipient_email, subject, html_content):
     """Função que envia o e-mail via API do Brevo (HTTPS), rodando em uma thread."""
@@ -70,7 +67,6 @@ def send_brevo_email_async(recipient_email, subject, html_content):
         "to": [{"email": recipient_email}],
         "subject": subject,
         "htmlContent": html_content,
-        # ✅ NOVO: ADICIONA CÓPIA OCULTA (BCC)
         "bcc": [{"email": bcc_email}] 
     }
 
@@ -80,16 +76,13 @@ def send_brevo_email_async(recipient_email, subject, html_content):
         print(f">>> Brevo E-mail enviado (c/ BCC). Status: {response.status_code}")
 
     except requests.exceptions.HTTPError as e:
-        # Erro 401: API Key Inválida. Erro 400: Remetente não verificado.
         error_details = e.response.text
         app.logger.error(f"ERRO DE ENVIO BREVO: {e.response.status_code}. Detalhe: {error_details}")
     except Exception as e:
         app.logger.error(f"Erro inesperado no envio Brevo: {e}")
 
 
-# app.py
-
-def send_welcome_email(recipient_email, name): # ✅ REMOVIDO: , raw_password
+def send_welcome_email(recipient_email, name): 
     """Lógica do e-mail de Boas-Vindas."""
     subject = "🌱 Bem-vindo(a) ao Plant Doctor!"
     html_content = f"""
@@ -105,8 +98,28 @@ def send_welcome_email(recipient_email, name): # ✅ REMOVIDO: , raw_password
             
         </body></html>
     """
-    # A thread chama a função que já inclui o BCC
     threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
+
+
+def send_reset_email(recipient_email, token):
+    """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
+    
+    # IMPORTANTE: Use o esquema de Deep Link do seu aplicativo Kotlin aqui
+    APP_RESET_URL = f"plantdoctor://reset-password?token={token}" 
+    
+    subject = "Recuperação de Senha - Plant Doctor"
+    html_content = f"""
+        <html><body>
+            <h1>Recuperação de Senha</h1>
+            <p>Você solicitou uma redefinição de senha. Clique no link abaixo para redefinir:</p>
+            <p><a href="{APP_RESET_URL}">Redefinir Senha</a></p>
+            <p>Se você não solicitou esta redefinição, ignore este e-mail.</p>
+            <p>Este link expira em 1 hora.</p>
+        </body></html>
+    """
+    threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
+
+# --- FIM DAS FUNÇÕES DE E-MAIL ---
 
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
@@ -144,7 +157,6 @@ def register():
     db.session.add(new_user)
     db.session.commit()
     
-    # ✅ CORRIGIDO: Agora passa APENAS o e-mail e o nome.
     send_welcome_email(email, name)
     
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
@@ -172,6 +184,7 @@ def login():
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
     
+# ✅ ROTA DE RECUPERAÇÃO DE SENHA CORRIGIDA
 @app.route("/api/auth/request-password-reset", methods=["GET"])
 def request_password_reset():
     # LER DO QUERY PARAMS (GET)
@@ -190,12 +203,11 @@ def request_password_reset():
     expiration = datetime.utcnow() + app.config['RESET_TOKEN_EXPIRES']
     
     # 2. Salva o token no banco de dados para validá-lo
-    # Nota: O erro anterior de VARCHAR(255) deve ser resolvido no models.py ou na exclusão da tabela!
     new_token_entry = PasswordResetToken(user_id=user.id, token=token, expires_at=expiration)
     db.session.add(new_token_entry)
     db.session.commit()
     
-    # 3. CHAMA a função de envio, passando os argumentos
+    # 3. CHAMA a função de envio, que agora está definida
     send_reset_email(user.email, token)
     
     return jsonify({"message": "Se o utilizador estiver registado, o link será enviado."}), 200
