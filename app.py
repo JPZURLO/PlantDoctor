@@ -87,19 +87,26 @@ def send_brevo_email_async(recipient_email, subject, html_content):
         app.logger.error(f"Erro inesperado no envio Brevo: {e}")
 
 
-def send_welcome_email(recipient_email, name):
+# app.py
+
+def send_welcome_email(recipient_email, name): # ✅ REMOVIDO: , raw_password
     """Lógica do e-mail de Boas-Vindas."""
     subject = "🌱 Bem-vindo(a) ao Plant Doctor!"
     html_content = f"""
         <html><body>
             <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
             <p>Seu registro foi concluído com sucesso. Estamos felizes por você se juntar à nossa comunidade.</p>
+            
+            <hr>
+            <h2>Detalhes de Acesso:</h2>
+            <p><strong>Seu E-mail de Acesso:</strong> {recipient_email}</p>
+            <p>Use este e-mail e a senha que você acabou de criar para fazer login no aplicativo.</p>
+            <hr>
+            
         </body></html>
     """
     # A thread chama a função que já inclui o BCC
     threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
-
-# ... (O restante do seu app.py, incluindo request_password_reset, permanece inalterado)
 
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
@@ -127,16 +134,17 @@ def register():
     
     if not name or not email or not password:
         return jsonify({"message": "Nome, email ou senha em falta."}), 400
-        
+    
     if User.query.filter_by(email=email).first():
         return jsonify({"message": "Este e-mail já está registado."}), 409
-        
-    hashed_password = generate_password_hash(password)
-    new_user = User(name=name, email=email, password_hash=hashed_password)
     
+    hashed_password = generate_password_hash(password)
+    
+    new_user = User(name=name, email=email, password_hash=hashed_password)
     db.session.add(new_user)
     db.session.commit()
     
+    # ✅ CORRIGIDO: Agora passa APENAS o e-mail e o nome.
     send_welcome_email(email, name)
     
     return jsonify({"message": f"Utilizador {name} registado com sucesso!"}), 201
