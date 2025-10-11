@@ -105,7 +105,7 @@ def send_reset_email(recipient_email, token):
     """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
     
     # IMPORTANTE: Use o esquema de Deep Link do seu aplicativo Kotlin aqui
-    APP_RESET_URL = f"plantdoctor://reset-password?token={token}" 
+    APP_RESET_URL = f"plantdoctor://reset-password?token={token}&email={recipient_email}"
     
     subject = "Recuperação de Senha - Plant Doctor"
     html_content = f"""
