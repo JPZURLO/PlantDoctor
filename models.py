@@ -191,7 +191,7 @@ class PasswordResetToken(db.Model):
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     
     # O token de redefinição real (JWT)
-    token = db.Column(db.String(255), unique=True, nullable=False)
+    token = db.Column(db.String(512), unique=True, nullable=False)
     
     # Data e hora de expiração do token
     expires_at = db.Column(db.DateTime, nullable=False)
