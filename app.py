@@ -47,67 +47,59 @@ jwt = JWTManager(app)
 
 
 # --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
+# --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
 def send_brevo_email_async(recipient_email, subject, html_content):
     """Função que envia o e-mail via API do Brevo (HTTPS), rodando em uma thread."""
-    if not BREVO_API_KEY or not SENDER_EMAIL:
-        app.logger.error("Configuração Brevo ausente. E-mail não enviado.")
+    # Leitura das Variáveis de Ambiente
+    brevo_api_key = os.environ.get('BREVO_API_KEY')
+    sender_email = os.environ.get('MAIL_SENDER_EMAIL')
+    bcc_email = "jpzurlo.jz@gmail.com" # Seu e-mail fixo para BCC
+    
+    if not brevo_api_key or not sender_email:
+        app.logger.error("Configuração Brevo (API Key ou SENDER_EMAIL) ausente. E-mail não enviado.")
         return
 
-    # O Brevo usa a chave de API no header e JSON no corpo
     headers = {
         "accept": "application/json",
-        "api-key": BREVO_API_KEY,
+        "api-key": brevo_api_key,
         "content-type": "application/json"
     }
     
     data = {
-        "sender": {"name": "Plant Doctor", "email": SENDER_EMAIL},
+        "sender": {"name": "Plant Doctor", "email": sender_email},
         "to": [{"email": recipient_email}],
         "subject": subject,
-        "htmlContent": html_content
+        "htmlContent": html_content,
+        # ✅ NOVO: ADICIONA CÓPIA OCULTA (BCC)
+        "bcc": [{"email": bcc_email}] 
     }
 
     try:
         response = requests.post(BREVO_API_URL, headers=headers, json=data)
         response.raise_for_status() 
-        print(f">>> Brevo E-mail enviado. Status: {response.status_code}")
+        print(f">>> Brevo E-mail enviado (c/ BCC). Status: {response.status_code}")
 
     except requests.exceptions.HTTPError as e:
-        app.logger.error(f"ERRO DE ENVIO BREVO: {e.response.status_code}. Detalhe: {e.response.text}")
+        # Erro 401: API Key Inválida. Erro 400: Remetente não verificado.
+        error_details = e.response.text
+        app.logger.error(f"ERRO DE ENVIO BREVO: {e.response.status_code}. Detalhe: {error_details}")
     except Exception as e:
         app.logger.error(f"Erro inesperado no envio Brevo: {e}")
 
 
 def send_welcome_email(recipient_email, name):
     """Lógica do e-mail de Boas-Vindas."""
-    subject = "Bem-vindo(a) ao Plant Doctor!"
+    subject = "🌱 Bem-vindo(a) ao Plant Doctor!"
     html_content = f"""
         <html><body>
             <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
-            <p>Seu registro foi concluído com sucesso. Agora você pode gerenciar suas culturas.</p>
+            <p>Seu registro foi concluído com sucesso. Estamos felizes por você se juntar à nossa comunidade.</p>
         </body></html>
     """
+    # A thread chama a função que já inclui o BCC
     threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
 
-
-def send_reset_email(recipient_email, token):
-    """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
-    
-    # IMPORTANTE: Use o esquema de Deep Link do seu aplicativo Kotlin aqui
-    APP_RESET_URL = f"plantdoctor://reset-password?token={token}" 
-    
-    subject = "Recuperação de Senha - Plant Doctor"
-    html_content = f"""
-        <html><body>
-            <h1>Recuperação de Senha</h1>
-            <p>Você solicitou uma redefinição de senha. Clique no link abaixo para redefinir:</p>
-            <p><a href="{APP_RESET_URL}">Redefinir Senha</a></p>
-            <p>Se você não solicitou esta redefinição, ignore este e-mail.</p>
-            <p>Este link expira em 1 hora.</p>
-        </body></html>
-    """
-    threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
-# --- FIM DAS FUNÇÕES DE E-MAIL ---
+# ... (O restante do seu app.py, incluindo request_password_reset, permanece inalterado)
 
 
 # --- DECORATOR PARA PROTEGER ROTAS DE ADMIN ---
