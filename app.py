@@ -14,8 +14,7 @@ import requests
 from models import (
     db, User, Culture, PlantedCulture, HistoryEvent,
     EventType, Doubt, Suggestion, UserType, UserEditHistory,
-    # Presumindo que este modelo existe para rastrear tokens de reset
-    PasswordResetToken 
+    PasswordResetToken, DiagnosisHistory # ✅ ADICIONADO NOVO MODELO
 )
 
 app = Flask(__name__)
@@ -35,7 +34,7 @@ app.config['RESET_TOKEN_EXPIRES'] = timedelta(hours=1)
 # --- CONFIGURAÇÃO BREVO/E-MAIL (API HTTP) ---
 BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
 SENDER_EMAIL = os.environ.get('MAIL_SENDER_EMAIL')
-BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
+BREVO_API_URL = "[https://api.brevo.com/v3/smtp/email](https://api.brevo.com/v3/smtp/email)"
 # --- FIM DA CONFIGURAÇÃO DE E-MAIL ---
 
 
@@ -107,10 +106,8 @@ def send_reset_email(recipient_email, token):
     """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
     
     # ESTA É A URL QUE O SEU APP ANDROID VAI INTERCEPTAR
-        APP_RESET_URL = f"plantdoctor://reset-password?token={token}"  
+    APP_RESET_URL = f"plantdoctor://reset-password?token={token}"  
 
-
-    
     subject = "Recuperação de Senha - Plant Doctor"
     html_content = f"""
         <html><body>
@@ -467,6 +464,66 @@ def add_history_event(planted_culture_id):
     
     return jsonify(new_event.to_dict()), 201
 
+# --- ✅ NOVAS ROTAS DE DIAGNÓSTICO (IA) ---
+
+@app.route("/api/diagnosis-history", methods=["POST"])
+@jwt_required()
+def save_diagnosis():
+    """Salva um novo resultado de diagnóstico da IA."""
+    user_id = int(get_jwt_identity())
+    data = request.get_json()
+    
+    culture_id = data.get('culture_id')
+    diagnosis_name = data.get('diagnosis_name')
+    observation = data.get('observation')
+    photo_path = data.get('photo_path')
+    # A data (analysis_date) é definida por padrão no modelo (server_default=func.now())
+
+    if not culture_id or not diagnosis_name or not photo_path:
+        return jsonify({"message": "culture_id, diagnosis_name e photo_path são obrigatórios."}), 400
+
+    # Valida se a cultura existe
+    culture = Culture.query.get(culture_id)
+    if not culture:
+        return jsonify({"message": "Cultura não encontrada."}), 404
+        
+    try:
+        new_diagnosis = DiagnosisHistory(
+            user_id=user_id,
+            culture_id=culture_id,
+            diagnosis_name=diagnosis_name,
+            observation=observation,
+            photo_path=photo_path
+        )
+        db.session.add(new_diagnosis)
+        db.session.commit()
+        
+        return jsonify(new_diagnosis.to_dict()), 201
+    except Exception as e:
+        db.session.rollback()
+        app.logger.error(f"Erro ao salvar diagnóstico: {e}")
+        return jsonify({"message": "Erro interno ao salvar o diagnóstico."}), 500
+
+@app.route("/api/cultures/<int:culture_id>/diagnosis-history", methods=["GET"])
+@jwt_required()
+def get_diagnosis_history(culture_id):
+    """Busca o histórico de diagnósticos de um usuário para uma cultura específica."""
+    user_id = int(get_jwt_identity())
+    
+    try:
+        history = DiagnosisHistory.query.filter_by(
+            user_id=user_id,
+            culture_id=culture_id
+        ).order_by(DiagnosisHistory.analysis_date.desc()).all()
+        
+        return jsonify([item.to_dict() for item in history]), 200
+    except Exception as e:
+        app.logger.error(f"Erro ao buscar histórico de diagnóstico: {e}")
+        return jsonify({"message": "Erro interno ao buscar histórico."}), 500
+
+# --- FIM DAS NOVAS ROTAS ---
+
+
 # --- ROTAS DE DÚVIDAS ---
 @app.route("/api/doubts", methods=["POST"])
 @jwt_required()
@@ -541,18 +598,18 @@ def seed_data():
     if Culture.query.first() is None:
         print(">>> Base de dados vazia. A popular com culturas...")
         cultures_to_add = [
-            Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png", cycle_days=120),
-            Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png", cycle_days=1095),
-            Culture(name="Soja", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s", cycle_days=110),
-            Culture(name="Cana de Açúcar", image_url="https://i.pinimg.com/736x/d5/d0/ea/d5d0eaaa6a08dfee042f98e265ea7f87.jpg", cycle_days=365),
-            Culture(name="Trigo", image_url="https://img.freepik.com/vetores-premium/ilustracao-de-icone-de-vetor-de-logotipo-de-trigo_833786-135.jpg", cycle_days=150),
-            Culture(name="Algodão", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRjmTW5RRENEI3nrlt8Ry1nsTzrGVpfx0oj-Q&s", cycle_days=180),
-            Culture(name="Arroz", image_url="https://img.freepik.com/vetores-premium/icone-de-arroz_609277-3890.jpg", cycle_days=130),
-            Culture(name="Feijão", image_url="https://img.freepik.com/vetores-premium/ilustracao-vetorial-de-feijao-preto-de-alta-qualidade-vetor-de-icone-de-feijao-preto-isolado-design-plano-moderno_830337-39.jpg", cycle_days=90),
-            Culture(name="Mandioca", image_url="https://media.istockphoto.com/id/1353955911/pt/vetorial/cassava-root.jpg?s=612x612&w=0&k=20&c=obWmGbXBnj46d4KbNNKW7DYMfWkAngFs9gRKh4E3OBg=", cycle_days=270),
-            Culture(name="Cacau", image_url="https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg", cycle_days=1825),
-            Culture(name="Banana", image_url="https://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png", cycle_days=365),
-            Culture(name="Laranja", image_url="https://cdn-icons-png.flaticon.com/512/5858/5858316.png", cycle_days=1095)
+            Culture(name="Milho", image_url="[https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png](https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png)", cycle_days=120),
+            Culture(name="Café", image_url="[https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png](https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png)", cycle_days=1095),
+            Culture(name="Soja", image_url="[https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s](https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s)", cycle_days=110),
+            Culture(name="Cana de Açúcar", image_url="[https://i.pinimg.com/736x/d5/d0/ea/d5d0eaaa6a08dfee042f98e265ea7f87.jpg](https://i.pinimg.com/736x/d5/d0/ea/d5d0eaaa6a08dfee042f98e265ea7f87.jpg)", cycle_days=365),
+            Culture(name="Trigo", image_url="[https://img.freepik.com/vetores-premium/ilustracao-de-icone-de-vetor-de-logotipo-de-trigo_833786-135.jpg](https://img.freepik.com/vetores-premium/ilustracao-de-icone-de-vetor-de-logotipo-de-trigo_833786-135.jpg)", cycle_days=150),
+            Culture(name="Algodão", image_url="[https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRjmTW5RRENEI3nrlt8Ry1nsTzrGVpfx0oj-Q&s](https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRjmTW5RRENEI3nrlt8Ry1nsTzrGVpfx0oj-Q&s)", cycle_days=180),
+            Culture(name="Arroz", image_url="[https://img.freepik.com/vetores-premium/icone-de-arroz_609277-3890.jpg](https://img.freepik.com/vetores-premium/icone-de-arroz_609277-3890.jpg)", cycle_days=130),
+            Culture(name="Feijão", image_url="httpsS://[img.freepik.com/vetores-premium/ilustracao-vetorial-de-feijao-preto-de-alta-qualidade-vetor-de-icone-de-feijao-preto-isolado-design-plano-moderno_830337-39.jpg](https://img.freepik.com/vetores-premium/ilustracao-vetorial-de-feijao-preto-de-alta-qualidade-vetor-de-icone-de-feijao-preto-isolado-design-plano-moderno_830337-39.jpg)", cycle_days=90),
+            Culture(name="Mandioca", image_url="[https://media.istockphoto.com/id/1353955911/pt/vetorial/cassava-root.jpg?s=612x612&w=0&k=20&c=obWmGbXBnj46d4KbNNKW7DYMfWkAngFs9gRKh4E3OBg=](https://media.istockphoto.com/id/1353955911/pt/vetorial/cassava-root.jpg?s=612x612&w=0&k=20&c=obWmGbXBnj46d4KbNNKW7DYMfWkAngFs9gRKh4E3OBg=)", cycle_days=270),
+            Culture(name="Cacau", image_url="[https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg](https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg)", cycle_days=1825),
+            Culture(name="Banana", image_url="[https://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png](https://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png)", cycle_days=365),
+            Culture(name="Laranja", image_url="[https://cdn-icons-png.flaticon.com/512/5858/5858316.png](https://cdn-icons-png.flaticon.com/512/5858/5858316.png)", cycle_days=1095)
         ]
         db.session.bulk_save_objects(cultures_to_add)
         db.session.commit()
