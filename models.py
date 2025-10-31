@@ -1,7 +1,7 @@
 from flask_sqlalchemy import SQLAlchemy
 from sqlalchemy.sql import func
-from sqlalchemy import Enum as SQLAlchemyEnum, Column, Integer, String, DateTime, ForeignKey # Importações adicionais para o novo modelo
-from sqlalchemy.orm import relationship # Importações adicionais para o novo modelo
+from sqlalchemy import Enum as SQLAlchemyEnum, Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Date
+from sqlalchemy.orm import relationship
 import enum
 
 db = SQLAlchemy()
@@ -29,7 +29,7 @@ class User(db.Model):
     user_type = db.Column(SQLAlchemyEnum(UserType), nullable=False, default=UserType.COMMON)
 
     cultures = db.relationship('Culture', secondary=user_cultures, lazy='subquery',
-                                backref=db.backref('interested_users', lazy=True))
+                                 backref=db.backref('interested_users', lazy=True))
     
     planted_cultures = db.relationship('PlantedCulture', backref='user', lazy=True, cascade="all, delete-orphan")
 
@@ -110,6 +110,36 @@ class HistoryEvent(db.Model):
             'event_type': self.event_type.name,
             'observation': self.observation
         }
+
+# --- ✅ NOVO MODELO DE HISTÓRICO DE DIAGNÓSTICO (IA) ---
+class DiagnosisHistory(db.Model):
+    __tablename__ = 'diagnosis_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    diagnosis_name = db.Column(db.String(255), nullable=False) # Ex: "Míldio"
+    observation = db.Column(db.Text, nullable=True) # Ex: "IA detectou com 95%..."
+    photo_path = db.Column(db.String(512), nullable=False) # URI da foto salva
+    analysis_date = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    culture_id = db.Column(db.Integer, db.ForeignKey('culture.id'), nullable=False)
+    
+    user = db.relationship('User', backref='diagnosis_history')
+    culture = db.relationship('Culture', backref='diagnosis_history')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'diagnosis_name': self.diagnosis_name,
+            'observation': self.observation,
+            'photo_path': self.photo_path,
+            'analysis_date': self.analysis_date.isoformat(),
+            'culture_name': self.culture.name, # Envia o nome da cultura
+            'culture_id': self.culture_id,
+            'user_id': self.user_id
+        }
+# --- FIM DO NOVO MODELO ---
+
 
 class Doubt(db.Model):
     __tablename__ = 'doubts'
@@ -201,3 +231,4 @@ class PasswordResetToken(db.Model):
     
     def __repr__(self):
         return f"<PasswordResetToken user_id={self.user_id}>"
+
