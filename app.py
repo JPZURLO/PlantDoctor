@@ -919,7 +919,7 @@ def get_disease_info(disease_name):
             "message": "Doença não encontrada. Por favor, envie uma nova imagem ou tente novamente."
         }), 404
 
-@app.route('/explanations/<disease_name>', methods=['GET'])
+@app.route('/api/explanations/<disease_name>', methods=['GET'])
 def get_explanation(disease_name):
     explanation = disease_explanations.get(disease_name)
 
