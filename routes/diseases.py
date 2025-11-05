@@ -1,7 +1,7 @@
-# routes/disease_info.py
+# routes/diseases.py
 from flask import Blueprint, jsonify
 
-disease_info_bp = Blueprint('disease_info', __name__)
+diseases_bp = Blueprint('disease_info', __name__)
 
 # 🧩 Dicionário completo de doenças e pragas
 disease_explanations = {
