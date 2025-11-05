@@ -6,13 +6,13 @@ from datetime import datetime, timedelta
 from sqlalchemy import func
 from functools import wraps
 # Importa todos os blueprints das rotas
-from routes.auth import auth_bp
-from routes.cultures import cultures_bp
-from routes.history import history_bp
-from routes.diagnosis import diagnosis_bp
-from routes.users import users_bp
-from routes.admin import admin_bp
-from routes.diseases import diseases_bp  # <-- rota com explicações de doenças/pragas
+from .routes.auth import auth_bp
+from .routes.cultures import cultures_bp
+from .routes.history import history_bp
+from .routes.diagnosis import diagnosis_bp
+from .routes.users import users_bp
+from .routes.admin import admin_bp
+from .routes.diseases import diseases_bp  # <-- rota com explicações de doenças/pragas
 import threading
 
 # NOVO: Usamos requests para a API HTTP do Brevo
