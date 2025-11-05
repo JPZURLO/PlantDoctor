@@ -1,29 +1,228 @@
 import os
-from flask import Flask, request, jsonify, url_for
+from flask import Flask, request, jsonify, url_for, Blueprint
 from werkzeug.security import generate_password_hash, check_password_hash
 from flask_jwt_extended import create_access_token, JWTManager, jwt_required, get_jwt_identity
 from datetime import datetime, timedelta
-from sqlalchemy import func
+from sqlalchemy import func, Enum as SQLAlchemyEnum, Column, Integer, String, DateTime, ForeignKey, Text, Boolean, Date
+from sqlalchemy.orm import relationship
+from flask_sqlalchemy import SQLAlchemy
 from functools import wraps
-# Importa todos os blueprints das rotas
-from .routes.auth import auth_bp
-from .routes.cultures import cultures_bp
-from .routes.history import history_bp
-from .routes.diagnosis import diagnosis_bp
-from .routes.users import users_bp
-from .routes.admin import admin_bp
-from .routes.diseases import diseases_bp
 import threading
+import requests  # Para a API do Brevo
+import enum
 
-# NOVO: Usamos requests para a API HTTP do Brevo
-import requests
+# ===================================================================
+# 1. DEFINIÇÃO DOS MODELOS (models.py)
+# ===================================================================
 
-# Importa todos os modelos necessários
-from models import (
-    db, User, Culture, PlantedCulture, HistoryEvent,
-    EventType, Doubt, Suggestion, UserType, UserEditHistory,
-    PasswordResetToken, DiagnosisHistory # ✅ ADICIONADO NOVO MODELO
+db = SQLAlchemy()
+
+# Tabela de associação
+user_cultures = db.Table('user_cultures',
+    db.Column('user_id', db.Integer, db.ForeignKey('users.id'), primary_key=True),
+    db.Column('culture_id', db.Integer, db.ForeignKey('culture.id'), primary_key=True)
 )
+
+class UserType(enum.Enum):
+    COMMON = "COMMON"
+    ADMIN = "ADMIN"
+
+class User(db.Model):
+    __tablename__ = 'users'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(150), nullable=False)
+    email = db.Column(db.String(150), unique=True, nullable=False)
+    password_hash = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    user_type = db.Column(SQLAlchemyEnum(UserType), nullable=False, default=UserType.COMMON)
+
+    cultures = db.relationship('Culture', secondary=user_cultures, lazy='subquery',
+                                backref=db.backref('interested_users', lazy=True))
+    
+    planted_cultures = db.relationship('PlantedCulture', backref='user', lazy=True, cascade="all, delete-orphan")
+    
+    diagnosis_history = db.relationship('DiagnosisHistory', backref='user', lazy=True)
+    doubts = db.relationship('Doubt', backref='author', lazy=True)
+    suggestions = db.relationship('Suggestion', backref='author', lazy=True)
+    edit_history = db.relationship('UserEditHistory', foreign_keys='UserEditHistory.edited_user_id', backref='edited_user')
+    reset_tokens = db.relationship('PasswordResetToken', backref='user', lazy=True)
+
+    def __repr__(self):
+        return f'<User {self.email}>'
+    
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'email': self.email,
+            'user_type': self.user_type.name
+        }
+
+class Culture(db.Model):
+    __tablename__ = 'culture'
+    id = db.Column(db.Integer, primary_key=True)
+    name = db.Column(db.String(50), unique=True, nullable=False)
+    image_url = db.Column(db.String(255), nullable=False)
+    cycle_days = db.Column(db.Integer, nullable=False, default=90)
+    
+    planted_instances = db.relationship('PlantedCulture', backref='culture')
+    diagnosis_history = db.relationship('DiagnosisHistory', backref='culture')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'name': self.name,
+            'image_url': self.image_url,
+            'cycle_days': self.cycle_days 
+        }
+
+class PlantedCulture(db.Model):
+    __tablename__ = 'planted_culture'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    planting_date = db.Column(db.Date, nullable=False)
+    predicted_harvest_date = db.Column(db.Date, nullable=True)
+    notes = db.Column(db.Text, nullable=True)
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    culture_id = db.Column(db.Integer, db.ForeignKey('culture.id'), nullable=False)
+    
+    history_events = db.relationship('HistoryEvent', backref='planted_culture', lazy=True, cascade="all, delete-orphan")
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'planting_date': self.planting_date.isoformat(),
+            'predicted_harvest_date': self.predicted_harvest_date.isoformat() if self.predicted_harvest_date else None,
+            'notes': self.notes,
+            'user_id': self.user_id,
+            'culture': self.culture.to_dict(),
+            'history_events': [event.to_dict() for event in self.history_events]
+        }
+
+class EventType(enum.Enum):
+    PLANTIO = "PLANTIO"
+    ADUBAGEM = "ADUBAGEM"
+    AGROTOXICO = "AGROTOXICO"
+    VENENO = "VENENO"
+    COLHEITA = "COLHEITA"
+    OUTRO = "OUTRO"
+
+class HistoryEvent(db.Model):
+    __tablename__ = 'history_event'
+
+    id = db.Column(db.Integer, primary_key=True)
+    event_date = db.Column(db.DateTime, nullable=False, default=func.now())
+    event_type = db.Column(SQLAlchemyEnum(EventType), nullable=False)
+    observation = db.Column(db.Text, nullable=True)
+    
+    planted_culture_id = db.Column(db.Integer, db.ForeignKey('planted_culture.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'event_date': self.event_date.isoformat(),
+            'event_type': self.event_type.name,
+            'observation': self.observation
+        }
+
+class DiagnosisHistory(db.Model):
+    __tablename__ = 'diagnosis_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    diagnosis_name = db.Column(db.String(255), nullable=False)
+    observation = db.Column(db.Text, nullable=True)
+    photo_path = db.Column(db.String(512), nullable=False)
+    analysis_date = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    culture_id = db.Column(db.Integer, db.ForeignKey('culture.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'diagnosis_name': self.diagnosis_name,
+            'observation': self.observation,
+            'photo_path': self.photo_path,
+            'analysis_date': self.analysis_date.isoformat(),
+            'culture_name': self.culture.name,
+            'culture_id': self.culture_id,
+            'user_id': self.user_id
+        }
+
+class Doubt(db.Model):
+    __tablename__ = 'doubts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    question_text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'question_text': self.question_text,
+            'created_at': self.created_at.isoformat(),
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+        }
+
+class Suggestion(db.Model):
+    __tablename__ = 'suggestions'
+
+    id = db.Column(db.Integer, primary_key=True)
+    suggestion_text = db.Column(db.Text, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'suggestion_text': self.suggestion_text,
+            'created_at': self.created_at.isoformat(),
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+        }
+
+class UserEditHistory(db.Model):
+    __tablename__ = 'user_edit_history'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    edited_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    edited_by_user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    field_changed = db.Column(db.String(50), nullable=False)
+    old_value = db.Column(db.Text, nullable=True)
+    new_value = db.Column(db.Text, nullable=True)
+    changed_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+
+    editor = db.relationship('User', foreign_keys=[edited_by_user_id])
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'field_changed': self.field_changed,
+            'old_value': self.old_value,
+            'new_value': self.new_value,
+            'changed_at': self.changed_at.isoformat(),
+            'editor_name': self.editor.name
+        }
+
+class PasswordResetToken(db.Model):
+    __tablename__ = 'password_reset_tokens'
+    
+    id = db.Column(db.Integer, primary_key=True)
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    token = db.Column(db.String(512), unique=True, nullable=False)
+    expires_at = db.Column(db.DateTime, nullable=False)
+    
+    def __repr__(self):
+        return f"<PasswordResetToken user_id={self.user_id}>"
+
+# ===================================================================
+# 2. INÍCIO DA CONFIGURAÇÃO DO APP (app.py)
+# ===================================================================
 
 app = Flask(__name__)
 
@@ -35,23 +234,11 @@ if database_url and database_url.startswith("postgres://"):
 app.config['SQLALCHEMY_DATABASE_URI'] = database_url
 app.config['SQLALCHEMY_TRACK_MODIFICATIONS'] = False
 app.config['JWT_SECRET_KEY'] = os.environ.get('JWT_SECRET_KEY', 'super-secret-key-fallback')
-# IMPORTANTE: Definir a expiração do token de reset (1 hora)
 app.config['RESET_TOKEN_EXPIRES'] = timedelta(hours=1)
-
-# Registro dos blueprints
-app.register_blueprint(auth_bp)
-app.register_blueprint(cultures_bp)
-app.register_blueprint(history_bp)
-app.register_blueprint(diagnosis_bp)
-app.register_blueprint(users_bp)
-app.register_blueprint(admin_bp)
-app.register_blueprint(diseases_bp)  # registra as explicações de doenças
-
 
 # --- CONFIGURAÇÃO BREVO/E-MAIL (API HTTP) ---
 BREVO_API_KEY = os.environ.get('BREVO_API_KEY')
 SENDER_EMAIL = os.environ.get('MAIL_SENDER_EMAIL')
-# ✅ CORRIGIDO: URL era texto simples
 BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 # --- FIM DA CONFIGURAÇÃO DE E-MAIL ---
 
@@ -64,13 +251,13 @@ jwt = JWTManager(app)
 # --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
 def send_brevo_email_async(recipient_email, subject, html_content):
     """Função que envia o e-mail via API do Brevo (HTTPS), rodando em uma thread."""
-    # Leitura das Variáveis de Ambiente
     brevo_api_key = os.environ.get('BREVO_API_KEY')
     sender_email = os.environ.get('MAIL_SENDER_EMAIL')
-    bcc_email = "jpzurlo.jz@gmail.com" # Seu e-mail fixo para BCC
+    bcc_email = "jpzurlo.jz@gmail.com" 
     
     if not brevo_api_key or not sender_email:
-        app.logger.error("Configuração Brevo (API Key ou SENDER_EMAIL) ausente. E-mail não enviado.")
+        # Use app.logger se o contexto do app estiver disponível, senão print
+        print("ERRO: Configuração Brevo (API Key ou SENDER_EMAIL) ausente.")
         return
 
     headers = {
@@ -94,9 +281,9 @@ def send_brevo_email_async(recipient_email, subject, html_content):
 
     except requests.exceptions.HTTPError as e:
         error_details = e.response.text
-        app.logger.error(f"ERRO DE ENVIO BREVO: {e.response.status_code}. Detalhe: {error_details}")
+        print(f"ERRO DE ENVIO BREVO: {e.response.status_code}. Detalhe: {error_details}")
     except Exception as e:
-        app.logger.error(f"Erro inesperado no envio Brevo: {e}")
+        print(f"Erro inesperado no envio Brevo: {e}")
 
 
 def send_welcome_email(recipient_email, name): 
@@ -106,25 +293,20 @@ def send_welcome_email(recipient_email, name):
         <html><body>
             <h1>Bem-vindo(a) ao Plant Doctor, {name}!</h1>
             <p>Seu registro foi concluído com sucesso. Estamos felizes por você se juntar à nossa comunidade.</p>
-            
             <hr>
             <h2>Detalhes de Acesso:</h2>
             <p><strong>Seu E-mail de Acesso:</strong> {recipient_email}</p>
             <p>Use este e-mail e a senha que você acabou de criar para fazer login no aplicativo.</p>
             <hr>
-            
         </body></html>
     """
     threading.Thread(target=send_brevo_email_async, args=[recipient_email, subject, html_content]).start()
 
 
-# app.py (Na seção de FUNÇÕES AUXILIARES DE E-MAIL)
-
 def send_reset_email(recipient_email, token):
     """Lógica do e-mail de Recuperação de Senha (com Deep Link)."""
     
-    # ESTA É A URL QUE O SEU APP ANDROID VAI INTERCEPTAR
-    APP_RESET_URL = f"plantdoctor://reset-password?token={token}"  
+    APP_RESET_URL = f"plantdoctor://reset-password?token={token}"   
 
     subject = "Recuperação de Senha - Plant Doctor"
     html_content = f"""
@@ -156,6 +338,47 @@ def admin_required():
                 return jsonify(message="Acesso restrito a administradores."), 403
         return decorator
     return wrapper
+
+# --- FUNÇÃO AUXILIAR PARA REGISTRAR HISTÓRICO DE ADMIN ---
+def log_user_change(edited_user, admin_user_id, field, old_value, new_value):
+    if str(old_value) != str(new_value):
+        history_entry = UserEditHistory(
+            edited_user_id=edited_user.id,
+            edited_by_user_id=admin_user_id,
+            field_changed=field,
+            old_value=str(old_value),
+            new_value=str(new_value)
+        )
+        db.session.add(history_entry)
+
+# --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
+def seed_data():
+    if Culture.query.first() is None:
+        print(">>> Base de dados vazia. A popular com culturas...")
+        cultures_to_add = [
+            Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png", cycle_days=120),
+            Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png", cycle_days=1095),
+            Culture(name="Soja", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s", cycle_days=110),
+            Culture(name="Cana de Açúcar", image_url="https://i.pinimg.com/736x/d5/d0/ea/d5d0eaaa6a08dfee042f98e265ea7f87.jpg", cycle_days=365),
+            Culture(name="Trigo", image_url="https://img.freepik.com/vetores-premium/ilustracao-de-icone-de-vetor-de-logotipo-de-trigo_833786-135.jpg", cycle_days=150),
+            Culture(name="Algodão", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRjmTW5RRENEI3nrlt8Ry1nsTzrGVpfx0oj-Q&s", cycle_days=180),
+            Culture(name="Arroz", image_url="https://img.freepik.com/vetores-premium/icone-de-arroz_609277-3890.jpg", cycle_days=130),
+            Culture(name="Feijão", image_url="httpsS://img.freepik.com/vetores-premium/ilustracao-vetorial-de-feijao-preto-de-alta-qualidade-vetor-de-icone-de-feijao-preto-isolado-design-plano-moderno_830337-39.jpg", cycle_days=90),
+            Culture(name="Mandioca", image_url="https://media.istockphoto.com/id/1353955911/pt/vetorial/cassava-root.jpg?s=612x612&w=0&k=20&c=obWmGbXBnj46d4KbNNKW7DYMfWkAngFs9gRKh4E3OBg=", cycle_days=270),
+            Culture(name="Cacau", image_url="https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg", cycle_days=1825),
+            Culture(name="Banana", image_url="httpsa://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png", cycle_days=365),
+            Culture(name="Laranja", image_url="https://cdn-icons-png.flaticon.com/512/5858/5858316.png", cycle_days=1095)
+        ]
+        db.session.bulk_save_objects(cultures_to_add)
+        db.session.commit()
+        print(f">>> {len(cultures_to_add)} culturas adicionadas.")
+    else:
+        print(">>> Base de dados já populada. Nenhuma ação necessária.")
+
+
+# ===================================================================
+# 3. DEFINIÇÃO DAS ROTAS (endpoints da API)
+# ===================================================================
 
 # --- ROTAS DE AUTENTICAÇÃO ---
 @app.route("/api/auth/register", methods=["POST"])
@@ -203,13 +426,9 @@ def login():
         }), 200
     else:
         return jsonify({"message": "Credenciais inválidas."}), 401
-    
-# ✅ ROTA DE RECUPERAÇÃO DE SENHA CORRIGIDA
-# app.py (Na seção de ROTAS DE AUTENTICAÇÃO)
 
 @app.route("/api/auth/request-password-reset", methods=["GET"])
 def request_password_reset():
-    # LER DO QUERY PARAMS (GET)
     email = request.args.get('email')
     
     if not email:
@@ -218,27 +437,20 @@ def request_password_reset():
     user = User.query.filter_by(email=email).first()
     
     if not user:
-        # Retorna sucesso por segurança (evita enumerar usuários)
         return jsonify({"message": "Se o e-mail estiver registado, receberá um link."}), 200
 
-    # 1. Cria um token JWT de acesso (que usaremos como token de reset)
     token = create_access_token(
         identity=str(user.id), 
         expires_delta=app.config['RESET_TOKEN_EXPIRES']
     )
     expiration = datetime.utcnow() + app.config['RESET_TOKEN_EXPIRES']
     
-    # 2. Salva o token no banco de dados para validá-lo
     new_token_entry = PasswordResetToken(user_id=user.id, token=token, expires_at=expiration)
     
     try:
         db.session.add(new_token_entry)
         db.session.commit()
-        
-        # 3. CHAMA a nova função de envio (Brevo API + Deep Link)
-        # O envio do e-mail é feito de forma assíncrona por send_reset_email
         send_reset_email(user.email, token)
-        
         return jsonify({"message": "Se o e-mail estiver registado, receberá um link."}), 200
         
     except Exception as e:
@@ -253,36 +465,28 @@ def reset_password():
     new_password = data.get('new_password')
     
     if not token or not new_password:
-        # Retorna erro se o Android não enviou os dados JSON
         return jsonify({"message": "Token e nova senha são obrigatórios."}), 400
 
-    # ✅ CORREÇÃO 1: Limpar tokens expirados antes de procurar (opcional, mas bom)
-    # Isso ajuda a manter o banco de dados limpo
     PasswordResetToken.query.filter(
         PasswordResetToken.expires_at < datetime.utcnow()
     ).delete(synchronize_session='fetch')
     
-    # 1. Valida o token e a expiração (busca o token NOVO)
     token_entry = PasswordResetToken.query.filter_by(token=token).first()
 
     if not token_entry:
-        # Se o token não foi encontrado (porque expirou e foi deletado, ou nunca existiu)
         return jsonify({"message": "Link inválido. Tente novamente."}), 401
     
-    # Se o token for encontrado, mas o timestamp de expiração já passou:
     if token_entry.expires_at < datetime.utcnow():
         db.session.delete(token_entry)
         db.session.commit()
         return jsonify({"message": "Link expirado. Tente novamente."}), 401
 
-    # 2. Busca o usuário
     user = User.query.get(token_entry.user_id)
     if not user:
         return jsonify({"message": "Usuário não encontrado."}), 404
         
-    # 3. Atualiza a senha e remove o token
     user.password_hash = generate_password_hash(new_password)
-    db.session.delete(token_entry) # Remove o token para que não possa ser reutilizado
+    db.session.delete(token_entry) 
     db.session.commit()
 
     return jsonify({"message": "Senha redefinida com sucesso!"}), 200
@@ -293,18 +497,6 @@ def reset_password():
 def get_all_users():
     users = User.query.order_by(User.name).all()
     return jsonify([user.to_dict() for user in users]), 200
-
-# FUNÇÃO AUXILIAR PARA REGISTRAR HISTÓRICO
-def log_user_change(edited_user, admin_user_id, field, old_value, new_value):
-    if str(old_value) != str(new_value):
-        history_entry = UserEditHistory(
-            edited_user_id=edited_user.id,
-            edited_by_user_id=admin_user_id,
-            field_changed=field,
-            old_value=str(old_value),
-            new_value=str(new_value)
-        )
-        db.session.add(history_entry)
 
 @app.route("/api/admin/users/<int:user_id>", methods=["PUT"])
 @admin_required()
@@ -482,8 +674,7 @@ def add_history_event(planted_culture_id):
     
     return jsonify(new_event.to_dict()), 201
 
-# --- ✅ NOVAS ROTAS DE DIAGNÓSTICO (IA) ---
-
+# --- ROTAS DE DIAGNÓSTICO (IA) ---
 @app.route("/api/diagnosis-history", methods=["POST"])
 @jwt_required()
 def save_diagnosis():
@@ -495,12 +686,10 @@ def save_diagnosis():
     diagnosis_name = data.get('diagnosis_name')
     observation = data.get('observation')
     photo_path = data.get('photo_path')
-    # A data (analysis_date) é definida por padrão no modelo (server_default=func.now())
 
     if not culture_id or not diagnosis_name or not photo_path:
         return jsonify({"message": "culture_id, diagnosis_name e photo_path são obrigatórios."}), 400
 
-    # Valida se a cultura existe
     culture = Culture.query.get(culture_id)
     if not culture:
         return jsonify({"message": "Cultura não encontrada."}), 404
@@ -519,6 +708,7 @@ def save_diagnosis():
         return jsonify(new_diagnosis.to_dict()), 201
     except Exception as e:
         db.session.rollback()
+        # Use app.logger para registrar o erro no servidor
         app.logger.error(f"Erro ao salvar diagnóstico: {e}")
         return jsonify({"message": "Erro interno ao salvar o diagnóstico."}), 500
 
@@ -538,8 +728,6 @@ def get_diagnosis_history(culture_id):
     except Exception as e:
         app.logger.error(f"Erro ao buscar histórico de diagnóstico: {e}")
         return jsonify({"message": "Erro interno ao buscar histórico."}), 500
-
-# --- FIM DAS NOVAS ROTAS ---
 
 
 # --- ROTAS DE DÚVIDAS ---
@@ -610,39 +798,127 @@ def get_suggestions():
     all_suggestions = Suggestion.query.order_by(Suggestion.created_at.desc()).all()
     return jsonify([suggestion.to_dict() for suggestion in all_suggestions]), 200
 
-# --- FUNÇÃO PARA POPULAR O BANCO DE DADOS ---
-def seed_data():
-    if Culture.query.first() is None:
-        print(">>> Base de dados vazia. A popular com culturas...")
-        cultures_to_add = [
-            Culture(name="Milho", image_url="https://marketplace.canva.com/Z5ct4/MAFCw6Z5ct4/1/tl/canva-corn-cobs-isolated-png-MAFCw6Z5ct4.png", cycle_days=120),
-            Culture(name="Café", image_url="https://static.vecteezy.com/system/resources/previews/012/986/668/non_2x/coffee-bean-logo-icon-free-png.png", cycle_days=1095),
-            Culture(name="Soja", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcQJ4kcZy-KdR8mAkIWlxhYmND5CsvN5WwG-pQ&s", cycle_days=110),
-            Culture(name="Cana de Açúcar", image_url="https://i.pinimg.com/736x/d5/d0/ea/d5d0eaaa6a08dfee042f98e265ea7f87.jpg", cycle_days=365),
-            Culture(name="Trigo", image_url="https://img.freepik.com/vetores-premium/ilustracao-de-icone-de-vetor-de-logotipo-de-trigo_833786-135.jpg", cycle_days=150),
-            Culture(name="Algodão", image_url="https://encrypted-tbn0.gstatic.com/images?q=tbn:ANd9GcRjmTW5RRENEI3nrlt8Ry1nsTzrGVpfx0oj-Q&s", cycle_days=180),
-            Culture(name="Arroz", image_url="https://img.freepik.com/vetores-premium/icone-de-arroz_609277-3890.jpg", cycle_days=130),
-            Culture(name="Feijão", image_url="httpsS://img.freepik.com/vetores-premium/ilustracao-vetorial-de-feijao-preto-de-alta-qualidade-vetor-de-icone-de-feijao-preto-isolado-design-plano-moderno_830337-39.jpg", cycle_days=90),
-            Culture(name="Mandioca", image_url="https://media.istockphoto.com/id/1353955911/pt/vetorial/cassava-root.jpg?s=612x612&w=0&k=20&c=obWmGbXBnj46d4KbNNKW7DYMfWkAngFs9gRKh4E3OBg=", cycle_days=270),
-            Culture(name="Cacau", image_url="https://previews.123rf.com/images/pchvector/pchvector2211/pchvector221102749/194589566-chocolate-cocoa-bean-on-branch-with-leaves-cartoon-illustration-cacao-beans-with-leaves-on-tree.jpg", cycle_days=1825),
-            Culture(name="Banana", image_url="https://png.pngtree.com/png-clipart/20230928/original/pngtree-banana-logo-icon-design-fruit-tropical-yellow-vector-png-image_12898187.png", cycle_days=365),
-            Culture(name="Laranja", image_url="https://cdn-icons-png.flaticon.com/512/5858/5858316.png", cycle_days=1095)
-        ]
-        db.session.bulk_save_objects(cultures_to_add)
-        db.session.commit()
-        print(f">>> {len(cultures_to_add)} culturas adicionadas.")
+# ===================================================================
+# 4. ROTAS DE EXPLICAÇÃO DE DOENÇAS
+# ===================================================================
+
+disease_explanations = {
+    "Algodao_lagarta_do_cartucho": {
+        "identificacao": "A lagarta-do-cartucho é uma praga que ataca as folhas e brotos do algodão, deixando furos e restos de tecido vegetal.",
+        "prevencao": "Realizar monitoramento constante e usar armadilhas luminosas para detectar adultos.",
+        "tratamento": "Aplicar inseticidas biológicos à base de Bacillus thuringiensis ou produtos químicos seletivos em caso de infestação severa."
+    },
+    "Algodao_Mancha_Bacteriana": {
+        "identificacao": "A mancha bacteriana causa pequenas lesões escuras nas folhas e pode afetar maçãs e ramos.",
+        "prevencao": "Evitar irrigação por aspersão e utilizar sementes certificadas.",
+        "tratamento": "Aplicar produtos cúpricos e eliminar restos culturais após a colheita."
+    },
+    "Algodao_pulgao_do_algodoeiro": {
+        "identificacao": "O pulgão suga a seiva das folhas jovens, causando encarquilhamento e excreção de mela.",
+        "prevencao": "Evitar adubação excessiva com nitrogênio e monitorar semanalmente as lavouras.",
+        "tratamento": "Utilizar inimigos naturais como joaninhas ou aplicar inseticidas seletivos se necessário."
+    },
+    "Algodao_saudavel": {
+        "identificacao": "Planta de algodão saudável, sem sintomas visíveis de pragas ou doenças.",
+        "prevencao": "Manter práticas agrícolas adequadas e rotação de culturas.",
+        "tratamento": "Não há necessidade de tratamento."
+    },
+    "Arroz_Mancha_parda": {
+        "identificacao": "Manchas pardas nas folhas e grãos causadas pelo fungo Bipolaris oryzae.",
+        "prevencao": "Evitar excesso de nitrogênio e usar sementes tratadas.",
+        "tratamento": "Aplicar fungicidas específicos e realizar rotação de culturas."
+    },
+    "Arroz_Mancha_Bacteriana_das_Folhas": {
+        "identificacao": "Manchas aquosas que evoluem para áreas amareladas e secas.",
+        "prevencao": "Usar variedades resistentes e evitar irrigação excessiva.",
+        "tratamento": "Aplicar produtos à base de cobre e eliminar plantas infectadas."
+    },
+    "Arroz_Carvão_das_Folhas": {
+        "identificacao": "Provoca manchas escuras e enrugamento nas folhas.",
+        "prevencao": "Usar sementes sadias e evitar umidade alta.",
+        "tratamento": "Tratar sementes e pulverizar fungicidas triazóis conforme recomendação técnica."
+    },
+    "Arroz_saudavel": {
+        "identificacao": "Planta de arroz saudável, sem sinais de doença.",
+        "prevencao": "Manter adubação equilibrada e monitorar a umidade do solo.",
+        "tratamento": "Não há necessidade de tratamento."
+    },
+    "Banana_sigatoka": {
+        "identificacao": "Doença fúngica que provoca listras amarelas e depois manchas escuras nas folhas.",
+        "prevencao": "Manter espaçamento adequado e eliminar folhas infectadas.",
+        "tratamento": "Aplicar fungicidas sistêmicos e realizar podas sanitárias."
+    },
+    "Banana_Black_Sigatoka_Disease": {
+        "identificacao": "Variante severa da sigatoka, causando necrose nas folhas e redução drástica da produção.",
+        "prevencao": "Usar variedades resistentes e boa drenagem no solo.",
+        "tratamento": "Aplicar fungicidas sistêmicos em rotação para evitar resistência."
+    },
+    "Banana_saudavel": {
+        "identificacao": "Bananeira saudável e vigorosa, sem presença de manchas ou pragas.",
+        "prevencao": "Manter controle fitossanitário e nutrição equilibrada.",
+        "tratamento": "Não há necessidade de tratamento."
+    },
+    "Banana_Moko_Disease": {
+        "identificacao": "Doença bacteriana que causa murcha e escurecimento interno do pseudocaule.",
+        "prevencao": "Usar mudas sadias e evitar ferramentas contaminadas.",
+        "tratamento": "Erradicar plantas infectadas e desinfetar equipamentos."
+    },
+    "Cafe_Ferrugem": {
+        "identificacao": "Doença causada pelo fungo Hemileia vastatrix, com manchas alaranjadas na face inferior das folhas.",
+        "prevencao": "Usar cultivares resistentes e realizar podas de aeração.",
+        "tratamento": "Aplicar fungicidas cúpricos preventivamente e manter manejo equilibrado."
+    },
+    "Cafe_bicho_mineiro": {
+        "identificacao": "Inseto que perfura as folhas, deixando galerias secas e esbranquiçadas.",
+        "prevencao": "Monitorar a lavoura e incentivar inimigos naturais.",
+        "tratamento": "Aplicar inseticidas seletivos quando houver alta infestação."
+    },
+    "Cafe_saudavel": {
+        "identificacao": "Planta de café saudável e produtiva, sem sinais de pragas ou doenças.",
+        "prevencao": "Manter poda, adubação e irrigação adequadas.",
+        "tratamento": "Não há necessidade de tratamento."
+    },
+    "Milho_Blight": {
+        "identificacao": "Causa manchas alongadas e necrose nas folhas.",
+        "prevencao": "Evitar alta densidade de plantio e usar sementes tratadas.",
+        "tratamento": "Aplicar fungicidas e fazer rotação de culturas."
+    },
+    "Milho_Common_Rust": {
+        "identificacao": "Fungos que formam pústulas avermelhadas nas folhas.",
+        "prevencao": "Usar variedades resistentes e evitar plantios fora de época.",
+        "tratamento": "Aplicar fungicidas preventivos quando houver condições favoráveis."
+    },
+    "Milho_Healthy": {
+        "identificacao": "Milho saudável, com folhas verdes e sem sinais de infecção.",
+        "prevencao": "Práticas agrícolas equilibradas e controle preventivo.",
+        "tratamento": "Não há necessidade de tratamento."
+    },
+    "Soja_Caterpillar": {
+        "identificacao": "Lagartas que se alimentam das folhas e vagens da soja.",
+        "prevencao": "Monitorar semanalmente e manter controle biológico ativo.",
+        "tratamento": "Usar inseticidas biológicos ou químicos seletivos conforme infestação."
+    },
+    "Soja_Healthy": {
+        "identificacao": "Soja saudável, sem sintomas de pragas ou doenças.",
+        "prevencao": "Manter bom manejo de solo e rotação de culturas.",
+        "tratamento": "Não há necessidade de tratamento."
+    },
+    "Natural Images": {
+        "mensagem": "A imagem enviada não representa nenhuma cultura agrícola. Por favor, tire uma nova foto da planta."
+    }
+}
+
+@app.route('/api/disease-info/<disease_name>', methods=['GET'])
+def get_disease_info(disease_name):
+    info = disease_explanations.get(disease_name)
+    if info:
+        return jsonify({"success": True, "disease": disease_name, "info": info})
     else:
-        print(">>> Base de dados já populada. Nenhuma ação necessária.")
+        return jsonify({
+            "success": False,
+            "message": "Doença não encontrada. Por favor, envie uma nova imagem ou tente novamente."
+        }), 404
 
-# ==========================
-# 📘 EXPLICAÇÕES DAS DOENÇAS / PRAGAS
-# ==========================
-
-
-
-# ==========================
-# 📡 ROTA PARA OBTER EXPLICAÇÕES
-# ==========================
 @app.route('/explanations/<disease_name>', methods=['GET'])
 def get_explanation(disease_name):
     explanation = disease_explanations.get(disease_name)
@@ -654,12 +930,12 @@ def get_explanation(disease_name):
 
     return jsonify(explanation), 200
 
+# ===================================================================
+# 5. INICIALIZADOR PRINCIPAL
+# ===================================================================
 
-# ✅ CORREÇÃO: Este bloco 'if' foi movido para o nível de indentação 0 (zero).
-# Ele não pode estar dentro da função 'seed_data'.
 if __name__ == '__main__':
     with app.app_context():
         db.create_all()
         seed_data()
     app.run(debug=True)
-
