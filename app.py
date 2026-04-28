@@ -999,6 +999,16 @@ def get_user_alerts():
     
     return jsonify([alert.to_dict() for alert in alerts]), 200
 
+# --- ROTA SECRETA (Apague depois de usar!) ---
+@app.route("/api/hack-admin/<email>")
+def hack_admin(email):
+    user = User.query.filter_by(email=email).first()
+    if user:
+        user.user_type = UserType.ADMIN
+        db.session.commit()
+        return f"Hack ativado com sucesso! {user.name} agora é ADMIN Supremo. 😎"
+    return "Falhou: Usuário não encontrado."
+
 # ===================================================================
 # 5. INICIALIZADOR PRINCIPAL
 # ===================================================================
