@@ -931,6 +931,75 @@ def get_explanation(disease_name):
     return jsonify(explanation), 200
 
 # ===================================================================
+# ROTAS DE RESPOSTAS E AVISOS (ADMIN E USUÁRIO)
+# ===================================================================
+
+@app.route("/api/admin/doubts/<int:doubt_id>/reply", methods=["POST"])
+@admin_required()
+def reply_to_doubt(doubt_id):
+    doubt = Doubt.query.get(doubt_id)
+    if not doubt:
+        return jsonify({"message": "Dúvida não encontrada."}), 404
+
+    data = request.get_json()
+    reply_text = data.get('reply_text')
+    
+    if not reply_text:
+        return jsonify({"message": "O texto da resposta é obrigatório."}), 400
+
+    # Atualiza a dúvida
+    doubt.reply_text = reply_text
+    doubt.replied_at = func.now()
+
+    # Cria um aviso para o usuário que fez a pergunta
+    alert = Alert(
+        title="Dúvida Respondida",
+        message="Um administrador respondeu à sua dúvida recentemente.",
+        user_id=doubt.user_id
+    )
+    db.session.add(alert)
+    db.session.commit()
+
+    return jsonify(doubt.to_dict()), 200
+
+@app.route("/api/admin/suggestions/<int:suggestion_id>/reply", methods=["POST"])
+@admin_required()
+def reply_to_suggestion(suggestion_id):
+    suggestion = Suggestion.query.get(suggestion_id)
+    if not suggestion:
+        return jsonify({"message": "Sugestão não encontrada."}), 404
+
+    data = request.get_json()
+    reply_text = data.get('reply_text')
+    
+    if not reply_text:
+        return jsonify({"message": "O texto da resposta é obrigatório."}), 400
+
+    # Atualiza a sugestão
+    suggestion.reply_text = reply_text
+    suggestion.replied_at = func.now()
+
+    # Cria um aviso para o usuário
+    alert = Alert(
+        title="Sugestão Avaliada",
+        message="Um administrador deixou um feedback na sua sugestão.",
+        user_id=suggestion.user_id
+    )
+    db.session.add(alert)
+    db.session.commit()
+
+    return jsonify(suggestion.to_dict()), 200
+
+@app.route("/api/alerts", methods=["GET"])
+@jwt_required()
+def get_user_alerts():
+    user_id = int(get_jwt_identity())
+    # Busca os avisos do usuário logado, do mais recente pro mais antigo
+    alerts = Alert.query.filter_by(user_id=user_id).order_by(Alert.created_at.desc()).all()
+    
+    return jsonify([alert.to_dict() for alert in alerts]), 200
+
+# ===================================================================
 # 5. INICIALIZADOR PRINCIPAL
 # ===================================================================
 
