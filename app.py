@@ -781,17 +781,17 @@ def post_doubt():
     )
     db.session.add(new_doubt)
     
-    # --- NOVO: Notificar todos os Admins sobre a nova dúvida ---
+    # --- LOGICA DE NOTIFICAÇÃO PARA ADMIN ---
+    # Busca todos os administradores no banco
     admins = User.query.filter_by(user_type=UserType.ADMIN).all()
     for admin in admins:
-        # Pega um pedacinho da pergunta para colocar no aviso
-        resumo_pergunta = question_text[:30] + "..." if len(question_text) > 30 else question_text
         new_alert = Alert(
-            title="Nova Dúvida Recebida",
-            message=f"Uma nova dúvida foi postada: '{resumo_pergunta}'",
+            title="Nova Dúvida",
+            message=f"Uma nova dúvida foi postada: {question_text[:20]}...",
             user_id=admin.id
         )
         db.session.add(new_alert)
+    # ----------------------------------------
 
     db.session.commit()
     return jsonify(new_doubt.to_dict()), 201
