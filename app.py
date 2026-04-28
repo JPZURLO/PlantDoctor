@@ -46,6 +46,7 @@ class User(db.Model):
     suggestions = db.relationship('Suggestion', backref='author', lazy=True)
     edit_history = db.relationship('UserEditHistory', foreign_keys='UserEditHistory.edited_user_id', backref='edited_user')
     reset_tokens = db.relationship('PasswordResetToken', backref='user', lazy=True)
+    alerts = db.relationship('Alert', backref='user', lazy=True) # Relacionamento de alertas
 
     def __repr__(self):
         return f'<User {self.email}>'
@@ -157,6 +158,9 @@ class Doubt(db.Model):
     question_text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    
+    reply_text = db.Column(db.Text, nullable=True)
+    replied_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
 
@@ -165,7 +169,9 @@ class Doubt(db.Model):
             'id': self.id,
             'question_text': self.question_text,
             'created_at': self.created_at.isoformat(),
-            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name,
+            'reply_text': self.reply_text,
+            'replied_at': self.replied_at.isoformat() if self.replied_at else None
         }
 
 class Suggestion(db.Model):
@@ -175,6 +181,9 @@ class Suggestion(db.Model):
     suggestion_text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    
+    reply_text = db.Column(db.Text, nullable=True)
+    replied_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
 
@@ -183,7 +192,30 @@ class Suggestion(db.Model):
             'id': self.id,
             'suggestion_text': self.suggestion_text,
             'created_at': self.created_at.isoformat(),
-            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name,
+            'reply_text': self.reply_text,
+            'replied_at': self.replied_at.isoformat() if self.replied_at else None
+        }
+
+class Alert(db.Model):
+    __tablename__ = 'alerts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'message': self.message,
+            'is_read': self.is_read,
+            'created_at': self.created_at.isoformat(),
+            'user_id': self.user_id
         }
 
 class UserEditHistory(db.Model):
@@ -748,6 +780,19 @@ def post_doubt():
         is_anonymous=is_anonymous
     )
     db.session.add(new_doubt)
+    
+    # --- NOVO: Notificar todos os Admins sobre a nova dúvida ---
+    admins = User.query.filter_by(user_type=UserType.ADMIN).all()
+    for admin in admins:
+        # Pega um pedacinho da pergunta para colocar no aviso
+        resumo_pergunta = question_text[:30] + "..." if len(question_text) > 30 else question_text
+        new_alert = Alert(
+            title="Nova Dúvida Recebida",
+            message=f"Uma nova dúvida foi postada: '{resumo_pergunta}'",
+            user_id=admin.id
+        )
+        db.session.add(new_alert)
+
     db.session.commit()
     return jsonify(new_doubt.to_dict()), 201
 
@@ -790,6 +835,18 @@ def post_suggestion():
         is_anonymous=is_anonymous
     )
     db.session.add(new_suggestion)
+    
+    # --- NOVO: Notificar todos os Admins sobre a nova sugestão ---
+    admins = User.query.filter_by(user_type=UserType.ADMIN).all()
+    for admin in admins:
+        resumo_sugestao = suggestion_text[:30] + "..." if len(suggestion_text) > 30 else suggestion_text
+        new_alert = Alert(
+            title="Nova Melhoria/Sugestão",
+            message=f"Um usuário enviou uma sugestão: '{resumo_sugestao}'",
+            user_id=admin.id
+        )
+        db.session.add(new_alert)
+
     db.session.commit()
     return jsonify(new_suggestion.to_dict()), 201
 
