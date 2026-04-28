@@ -148,6 +148,10 @@ class Doubt(db.Model):
     question_text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # NOVOS CAMPOS PARA A RESPOSTA
+    reply_text = db.Column(db.Text, nullable=True)
+    replied_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     author = db.relationship('User', backref='doubts')
@@ -157,7 +161,9 @@ class Doubt(db.Model):
             'id': self.id,
             'question_text': self.question_text,
             'created_at': self.created_at.isoformat(),
-            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name,
+            'reply_text': self.reply_text,
+            'replied_at': self.replied_at.isoformat() if self.replied_at else None
         }
 
 class Suggestion(db.Model):
@@ -167,6 +173,10 @@ class Suggestion(db.Model):
     suggestion_text = db.Column(db.Text, nullable=False)
     created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
     is_anonymous = db.Column(db.Boolean, default=False, nullable=False)
+    
+    # NOVOS CAMPOS PARA A RESPOSTA
+    reply_text = db.Column(db.Text, nullable=True)
+    replied_at = db.Column(db.TIMESTAMP(timezone=True), nullable=True)
 
     user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
     author = db.relationship('User', backref='suggestions')
@@ -176,7 +186,34 @@ class Suggestion(db.Model):
             'id': self.id,
             'suggestion_text': self.suggestion_text,
             'created_at': self.created_at.isoformat(),
-            'author_name': 'Anônimo' if self.is_anonymous else self.author.name
+            'author_name': 'Anônimo' if self.is_anonymous else self.author.name,
+            'reply_text': self.reply_text,
+            'replied_at': self.replied_at.isoformat() if self.replied_at else None
+        }
+
+# ==========================================
+# NOVA CLASSE DE AVISOS (ALERTAS)
+# ==========================================
+class Alert(db.Model):
+    __tablename__ = 'alerts'
+
+    id = db.Column(db.Integer, primary_key=True)
+    title = db.Column(db.String(100), nullable=False)
+    message = db.Column(db.Text, nullable=False)
+    is_read = db.Column(db.Boolean, default=False, nullable=False)
+    created_at = db.Column(db.TIMESTAMP(timezone=True), nullable=False, server_default=func.now())
+    
+    user_id = db.Column(db.Integer, db.ForeignKey('users.id'), nullable=False)
+    user = db.relationship('User', backref='alerts')
+
+    def to_dict(self):
+        return {
+            'id': self.id,
+            'title': self.title,
+            'message': self.message,
+            'is_read': self.is_read,
+            'created_at': self.created_at.isoformat(),
+            'user_id': self.user_id
         }
 
 class UserEditHistory(db.Model):
