@@ -1072,6 +1072,10 @@ def hack_admin(email):
 
 if __name__ == '__main__':
     with app.app_context():
+        # CUIDADO: Isso apaga os dados de todas as tabelas!
+        # Use apenas para sincronizar a estrutura agora
+        db.drop_all() 
         db.create_all()
         seed_data()
+    app.run(debug=True)
     app.run(debug=True)
