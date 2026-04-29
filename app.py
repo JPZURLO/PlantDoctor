@@ -1082,17 +1082,6 @@ def hack_admin(email):
     return "Falhou: Usuário não encontrado."
 
 # ===================================================================
-# ATENÇÃO JOÃO: NOVO LUGAR DO RESET (DEPOIS QUE AS FUNÇÕES JÁ EXISTEM)
-# ===================================================================
-with app.app_context():
-    print(">>> Iniciando limpeza do banco de dados no Render...")
-    db.drop_all()  # APAGA AS TABELAS ANTIGAS
-    db.create_all() # CRIA AS TABELAS NOVAS COM A COLUNA REPLY
-    seed_data()     # REPOPULA AS CULTURAS
-    print(">>> Banco de dados atualizado com sucesso!")
-# ===================================================================
-
-# ===================================================================
 # 5. INICIALIZADOR PRINCIPAL
 # ===================================================================
 
