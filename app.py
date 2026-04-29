@@ -1055,6 +1055,22 @@ def get_user_alerts():
     
     return jsonify([alert.to_dict() for alert in alerts]), 200
 
+@app.route("/api/alerts/<int:alert_id>/read", methods=["PUT"])
+@jwt_required()
+def mark_alert_read(alert_id):
+    user_id = int(get_jwt_identity())
+    
+    # Busca o alerta garantindo que ele pertence ao usuário logado
+    alert = Alert.query.filter_by(id=alert_id, user_id=user_id).first()
+    if not alert:
+        return jsonify({"message": "Aviso não encontrado."}), 404
+
+    # Muda o status para lido
+    alert.is_read = True
+    db.session.commit()
+    
+    return jsonify(alert.to_dict()), 200
+
 # --- ROTA SECRETA (Apague depois de usar!) ---
 @app.route("/api/hack-admin/<email>")
 def hack_admin(email):
