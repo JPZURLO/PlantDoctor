@@ -279,17 +279,6 @@ BREVO_API_URL = "https://api.brevo.com/v3/smtp/email"
 db.init_app(app)
 jwt = JWTManager(app)
 
-# ===================================================================
-# ATENÇÃO JOÃO: ESTE É O NOVO LUGAR DO RESET (RENDER VAI LER AQUI)
-# ===================================================================
-with app.app_context():
-    print(">>> Iniciando limpeza do banco de dados no Render...")
-    db.drop_all()  # Isso vai APAGAR todas as tabelas antigas
-    db.create_all() # Isso vai CRIAR as tabelas com as novas colunas
-    seed_data()     # Repopula as culturas (milho, soja, etc.)
-    print(">>> Banco de dados atualizado com sucesso!")
-# ===================================================================
-
 
 # --- FUNÇÕES AUXILIARES DE E-MAIL (BREVO ASSÍNCRONO) ---
 def send_brevo_email_async(recipient_email, subject, html_content):
@@ -1075,6 +1064,17 @@ def hack_admin(email):
         db.session.commit()
         return f"Hack ativado com sucesso! {user.name} agora é ADMIN Supremo. 😎"
     return "Falhou: Usuário não encontrado."
+
+# ===================================================================
+# ATENÇÃO JOÃO: NOVO LUGAR DO RESET (DEPOIS QUE AS FUNÇÕES JÁ EXISTEM)
+# ===================================================================
+with app.app_context():
+    print(">>> Iniciando limpeza do banco de dados no Render...")
+    db.drop_all()  # APAGA AS TABELAS ANTIGAS
+    db.create_all() # CRIA AS TABELAS NOVAS COM A COLUNA REPLY
+    seed_data()     # REPOPULA AS CULTURAS
+    print(">>> Banco de dados atualizado com sucesso!")
+# ===================================================================
 
 # ===================================================================
 # 5. INICIALIZADOR PRINCIPAL
