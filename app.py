@@ -1072,7 +1072,11 @@ def hack_admin(email):
 
 if __name__ == '__main__':
     with app.app_context():
-        db.create_all()
-        seed_data()
-    app.run(debug=True)
+        print(">>> Iniciando limpeza do banco de dados...")
+        db.drop_all()  # Isso vai APAGAR todas as tabelas e dados atuais
+        print(">>> Criando novas tabelas com as colunas reply_text...")
+        db.create_all() # Isso vai CRIAR as tabelas do zero com a estrutura correta
+        seed_data()     # Repopula as culturas (milho, soja, etc.)
+        print(">>> Banco de dados atualizado com sucesso!")
+    
     app.run(debug=True)
